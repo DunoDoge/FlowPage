@@ -27,10 +27,6 @@
     {
       "name": "recent_card_desc",
       "value": "最近收下的三笺"
-    },
-    {
-      "name": "paste_reason",
-      "value": "读取你刚复制的链接，收进流笺"
     }
   ]
 }

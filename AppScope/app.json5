@@ -1,7 +1,7 @@
 {
   "app": {
     "bundleName": "com.dunodoge.flowpage",
-    "vendor": "example",
+    "vendor": "dunodoge",
     "versionCode": 1000000,
     "versionName": "1.0.0",
     "icon": "$media:layered_image",

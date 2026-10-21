@@ -1,6 +1,6 @@
 {
   "modelVersion": "26.0.0",
-  "description": "Please describe the basic information.",
+  "description": "流笺 FlowPage：本地优先的链接收笺工具。",
   "dependencies": {},
   "devDependencies": {
     "@ohos/hypium": "1.0.19",
