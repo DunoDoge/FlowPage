@@ -1,5 +1,9 @@
-import abilityTest from './Ability.test'
+import webDavXmlTest from './WebDavXml.test'
+import syncPlannerTest from './SyncPlanner.test'
+import syncStoreTest from './SyncStore.test'
 
 export default function testsuite() {
-  abilityTest()
+  webDavXmlTest()
+  syncPlannerTest()
+  syncStoreTest()
 }

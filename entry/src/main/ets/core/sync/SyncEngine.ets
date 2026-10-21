@@ -6,7 +6,8 @@ import { SyncConfigStore } from './SyncConfigStore';
 import { SyncErrorText } from './SyncErrorText';
 import { SyncAction, SyncPlanner } from './SyncPlanner';
 import { SyncRecord } from './SyncRecord';
-import { RemoteItem, WebDavTransport } from './WebDavTransport';
+import { RemoteItem } from './RemoteItem';
+import { WebDavTransport } from './WebDavTransport';
 
 export class SyncReport {
   uploaded: number = 0;

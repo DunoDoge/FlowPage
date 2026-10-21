@@ -2,6 +2,8 @@ import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { RemoteItem } from './RemoteItem';
+import { WebDavXml } from './WebDavXml';
 
 const PROPFIND_BODY: string =
   '<?xml version="1.0" encoding="utf-8"?>' +
@@ -12,11 +14,6 @@ export class WebDavConfig {
   user: string = '';
   password: string = '';
   credentialInvalid: boolean = false;
-}
-
-export class RemoteItem {
-  name: string = '';
-  etag: string = '';
 }
 
 export class WebDavResponse {
@@ -161,15 +158,6 @@ export class WebDavTransport {
     await this.ensureCollection('FlowPage/v1/items');
   }
 
-  private decodeHref(value: string): string {
-    let text = value;
-    text = text.replace(new RegExp('&amp;', 'g'), '&');
-    text = text.replace(new RegExp('&lt;', 'g'), '<');
-    text = text.replace(new RegExp('&gt;', 'g'), '>');
-    text = text.replace(new RegExp('&quot;', 'g'), '"');
-    return text;
-  }
-
   async listItems(): Promise<RemoteItem[]> {
     const response = await this.request('PROPFIND', 'FlowPage/v1/items/', PROPFIND_BODY, {
       'Depth': '1',
@@ -187,40 +175,7 @@ export class WebDavTransport {
     if (response.status !== 207 && response.status !== 200) {
       throw new Error(`PROPFIND_${response.status}`);
     }
-    const items: RemoteItem[] = [];
-    const blocks = response.body.match(new RegExp('<[^>]*response[^>]*>[\\s\\S]*?</[^>]*response>', 'gi'));
-    if (blocks === null) {
-      return items;
-    }
-    for (let i = 0; i < blocks.length; i++) {
-      const block = blocks[i];
-      const hrefMatch = new RegExp('<[^>]*href[^>]*>([^<]*)<', 'i').exec(block);
-      if (hrefMatch === null) {
-        continue;
-      }
-      let href = this.decodeHref(hrefMatch[1].trim());
-      if (href.endsWith('/')) {
-        continue;
-      }
-      const noQuery = href.split('?')[0];
-      const segments = noQuery.split('/');
-      let name = segments[segments.length - 1];
-      name = name.replace(new RegExp('%20', 'g'), ' ');
-      try {
-        name = decodeURIComponent(name);
-      } catch (error) {
-        continue;
-      }
-      if (!name.endsWith('.json')) {
-        continue;
-      }
-      const etagMatch = new RegExp('<[^>]*getetag[^>]*>([^<]*)<', 'i').exec(block);
-      const item = new RemoteItem();
-      item.name = name.substring(0, name.length - 5);
-      item.etag = etagMatch !== null ? this.decodeHref(etagMatch[1].trim()) : '';
-      items.push(item);
-    }
-    return items;
+    return WebDavXml.parseItems(response.body);
   }
 
   async get(name: string): Promise<WebDavResponse> {
@@ -240,11 +195,7 @@ export class WebDavTransport {
     if (response.status !== 207 && response.status !== 200) {
       return '';
     }
-    const match = new RegExp('<[^>]*getetag[^>]*>([^<]*)<', 'i').exec(response.body);
-    if (match === null) {
-      return '';
-    }
-    return this.decodeHref(match[1].trim());
+    return WebDavXml.parseEtag(response.body);
   }
 
   async put(name: string, json: string, etag: string): Promise<string> {

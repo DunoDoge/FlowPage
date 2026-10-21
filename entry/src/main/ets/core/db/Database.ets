@@ -88,12 +88,12 @@ const SQL_INDEXES: string[] = [
 export class Database {
   private static store: relationalStore.RdbStore | undefined = undefined;
 
-  static async init(context: common.Context): Promise<relationalStore.RdbStore> {
+  static async init(context: common.Context, name: string = DB_NAME): Promise<relationalStore.RdbStore> {
     if (Database.store !== undefined) {
       return Database.store;
     }
     const config: relationalStore.StoreConfig = {
-      name: DB_NAME,
+      name: name,
       securityLevel: relationalStore.SecurityLevel.S1
     };
     const store = await relationalStore.getRdbStore(context, config);
