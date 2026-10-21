@@ -1,5 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { Bookmark } from '../model/Bookmark';
 import { ImportResult } from '../model/ImportResult';
 import { TagCount } from '../model/Tag';
@@ -13,6 +14,15 @@ import { SyncRecord } from '../core/sync/SyncRecord';
 import { AppState } from '../common/AppState';
 import { BookmarkSource, ReadState, SnapshotStatus } from '../common/Constants';
 import { domainOf, normalizeUrl } from '../common/UrlUtil';
+import { CardPublisher } from '../core/service/CardPublisher';
+import {
+  CARD_KEY_RECENT_LINES,
+  CARD_KEY_TODAY_DOMAIN,
+  CARD_KEY_TODAY_ID,
+  CARD_KEY_TODAY_TITLE,
+  CARD_KEY_TOTAL_COUNT,
+  CARD_PREFERENCES_NAME
+} from '../core/service/CardSnapshot';
 
 export class SaveOutcome {
   bookmark: Bookmark = new Bookmark();
@@ -46,6 +56,8 @@ export class FlowRepository {
   private static readonly instance: FlowRepository = new FlowRepository();
   private dao: BookmarkDao = new BookmarkDao();
   private context: common.Context | undefined = undefined;
+  private cardSnapshotRunning: boolean = false;
+  private cardSnapshotPending: boolean = false;
 
   static get(): FlowRepository {
     return FlowRepository.instance;
@@ -66,7 +78,42 @@ export class FlowRepository {
 
   private notify(): void {
     AppState.shared.notifyChanged();
-    this.writeCardSnapshot().catch(() => {});
+    this.scheduleCardSnapshot();
+  }
+
+  private scheduleCardSnapshot(): void {
+    if (this.context === undefined) {
+      return;
+    }
+    if (this.cardSnapshotRunning) {
+      this.cardSnapshotPending = true;
+      return;
+    }
+    this.cardSnapshotRunning = true;
+    this.runCardSnapshot();
+  }
+
+  private async runCardSnapshot(): Promise<void> {
+    if (this.context === undefined) {
+      return;
+    }
+    try {
+      await this.writeCardSnapshot();
+      await CardPublisher.publish(this.requireContext());
+    } catch (error) {
+      hilog.warn(
+        0x0000,
+        'flowpage',
+        'Failed to refresh card snapshot or push cards reason=%{public}s',
+        JSON.stringify(error)
+      );
+    } finally {
+      this.cardSnapshotRunning = false;
+      if (this.cardSnapshotPending) {
+        this.cardSnapshotPending = false;
+        this.scheduleCardSnapshot();
+      }
+    }
   }
 
   private async writeCardSnapshot(): Promise<void> {
@@ -85,11 +132,11 @@ export class FlowRepository {
       const index = new Date().getDate() % active.length;
       today = active[index];
     }
-    const store = preferences.getPreferencesSync(this.context, { name: 'flowpage_card' });
-    store.putSync('today_title', today !== undefined ? today.title : '纸还空着');
-    store.putSync('today_domain', today !== undefined ? domainOf(today.url) : '');
-    store.putSync('today_id', today !== undefined ? today.id : '');
-    store.putSync('total_count', `${active.length}`);
+    const store = preferences.getPreferencesSync(this.context, { name: CARD_PREFERENCES_NAME });
+    store.putSync(CARD_KEY_TODAY_TITLE, today !== undefined ? today.title : '纸还空着');
+    store.putSync(CARD_KEY_TODAY_DOMAIN, today !== undefined ? domainOf(today.url) : '');
+    store.putSync(CARD_KEY_TODAY_ID, today !== undefined ? today.id : '');
+    store.putSync(CARD_KEY_TOTAL_COUNT, `${active.length}`);
     const limit = active.length < 3 ? active.length : 3;
     let lines = '';
     for (let i = 0; i < limit; i++) {
@@ -98,7 +145,7 @@ export class FlowRepository {
         lines += '\n';
       }
     }
-    store.putSync('recent_lines', lines);
+    store.putSync(CARD_KEY_RECENT_LINES, lines);
     await store.flush();
   }
 

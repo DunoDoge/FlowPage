@@ -1,58 +1,61 @@
-import { FormExtensionAbility, formBindingData, formProvider } from '@kit.FormKit';
+import { FormExtensionAbility, formBindingData, formInfo, formProvider } from '@kit.FormKit';
 import { Want } from '@kit.AbilityKit';
-import { preferences } from '@kit.ArkData';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { CardSnapshot } from '../core/service/CardSnapshot';
 
-class CardValues {
-  todayTitle: string = '纸还空着';
-  todayDomain: string = '';
-  todayId: string = '';
-  recentLines: string = '';
-  totalCount: string = '0';
-}
+const DOMAIN: number = 0x0000;
+const TAG: string = 'flowpage';
 
 export default class TodayCardAbility extends FormExtensionAbility {
-  private readValues(): CardValues {
-    const values = new CardValues();
-    try {
-      const store = preferences.getPreferencesSync(this.context, { name: 'flowpage_card' });
-      const title = store.getSync('today_title', '纸还空着');
-      const domain = store.getSync('today_domain', '');
-      const id = store.getSync('today_id', '');
-      const lines = store.getSync('recent_lines', '');
-      const count = store.getSync('total_count', '0');
-      values.todayTitle = typeof title === 'string' ? title : '纸还空着';
-      values.todayDomain = typeof domain === 'string' ? domain : '';
-      values.todayId = typeof id === 'string' ? id : '';
-      values.recentLines = typeof lines === 'string' ? lines : '';
-      values.totalCount = typeof count === 'string' ? count : '0';
-    } catch (error) {
-      hilog.error(0x0000, 'flowpage', 'Failed to read card snapshot');
+  private formIdOf(want: Want): string {
+    const params = want.parameters;
+    if (params === undefined) {
+      return '';
     }
-    return values;
+    const identity = params[formInfo.FormParam.IDENTITY_KEY];
+    if (typeof identity === 'string') {
+      return identity;
+    }
+    return '';
   }
 
-  private toBindingData(): formBindingData.FormBindingData {
-    const values = this.readValues();
-    const data: Record<string, string> = {
-      'today_title': values.todayTitle,
-      'today_domain': values.todayDomain,
-      'today_id': values.todayId,
-      'recent_lines': values.recentLines,
-      'total_count': values.totalCount
-    };
-    return formBindingData.createFormBindingData(data);
+  private refresh(formId: string): void {
+    if (formId.length === 0) {
+      hilog.warn(DOMAIN, TAG, 'Card refresh called without form id');
+      return;
+    }
+    formProvider.updateForm(formId, CardSnapshot.toBindingData(this.context)).catch((error: BusinessError) => {
+      hilog.warn(
+        DOMAIN,
+        TAG,
+        'Failed to update card formId=%{public}s code=%{public}d reason=%{public}s',
+        formId,
+        error.code,
+        error.message
+      );
+    });
   }
 
   onAddForm(want: Want): formBindingData.FormBindingData {
-    return this.toBindingData();
+    const formId = this.formIdOf(want);
+    if (formId.length > 0) {
+      CardSnapshot.addFormId(this.context, formId);
+    } else {
+      hilog.warn(DOMAIN, TAG, 'onAddForm missing form identity');
+    }
+    return CardSnapshot.toBindingData(this.context);
   }
 
   onUpdateForm(formId: string): void {
-    formProvider.updateForm(formId, this.toBindingData()).catch(() => {});
+    this.refresh(formId);
   }
 
   onFormEvent(formId: string, message: string): void {
-    formProvider.updateForm(formId, this.toBindingData()).catch(() => {});
+    this.refresh(formId);
+  }
+
+  onRemoveForm(formId: string): void {
+    CardSnapshot.removeFormId(this.context, formId);
   }
 }
