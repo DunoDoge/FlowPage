@@ -308,7 +308,7 @@ export struct StreamHome {
                   .margin({ left: 20, right: 20 })
               }
             }
-          }, (item: Bookmark) => item.id)
+          }, (item: Bookmark) => `${item.id}:${item.rev}:${item.updatedAt}`)
         }
         .width('100%')
         .layoutWeight(1)

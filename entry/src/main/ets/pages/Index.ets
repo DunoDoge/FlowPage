@@ -125,7 +125,6 @@ struct Index {
 
   private closeDetail(): void {
     this.navStack.pop();
-    this.streamRefresh = this.streamRefresh + 1;
   }
 
   build() {
@@ -250,42 +249,51 @@ struct Index {
       }
       .hideTitleBar(true)
       .backgroundColor($r('app.color.paper'))
+      .onHidden(() => {
+        this.streamRefresh = this.streamRefresh + 1;
+      })
     } else if (name === 'tags') {
       NavDestination() {
         TagsPage({
           showBack: true,
           onBack: () => {
             this.navStack.pop();
-            this.streamRefresh = this.streamRefresh + 1;
           }
         })
       }
       .hideTitleBar(true)
       .backgroundColor($r('app.color.paper'))
+      .onHidden(() => {
+        this.streamRefresh = this.streamRefresh + 1;
+      })
     } else if (name === 'sync') {
       NavDestination() {
         SyncPage({
           showBack: true,
           onBack: () => {
             this.navStack.pop();
-            this.streamRefresh = this.streamRefresh + 1;
           }
         })
       }
       .hideTitleBar(true)
       .backgroundColor($r('app.color.paper'))
+      .onHidden(() => {
+        this.streamRefresh = this.streamRefresh + 1;
+      })
     } else if (name === 'settings') {
       NavDestination() {
         SettingsPage({
           showBack: true,
           onBack: () => {
             this.navStack.pop();
-            this.streamRefresh = this.streamRefresh + 1;
           }
         })
       }
       .hideTitleBar(true)
       .backgroundColor($r('app.color.paper'))
+      .onHidden(() => {
+        this.streamRefresh = this.streamRefresh + 1;
+      })
     }
   }
 }
