@@ -1,9 +1,26 @@
 import { relationalStore } from '@kit.ArkData';
 import { util } from '@kit.ArkTS';
 import { Bookmark } from '../../model/Bookmark';
+import { BookmarkQuery } from '../../model/BookmarkQuery';
+import { ConflictRecord } from '../../model/Conflict';
+import { LibraryCounts } from '../../model/LibraryCounts';
 import { TagCount } from '../../model/Tag';
 import { Tombstone } from '../../model/Tombstone';
+import { StreamFilter } from '../../common/Constants';
+import { domainOf } from '../../common/UrlUtil';
 import { Database } from './Database';
+
+class WhereClause {
+  sql: string = '';
+  args: relationalStore.ValueType[] = [];
+}
+
+function escapeLike(value: string): string {
+  let text = value.split('\\').join('\\\\');
+  text = text.split('%').join('\\%');
+  text = text.split('_').join('\\_');
+  return text;
+}
 
 export class BookmarkDao {
   private toBucket(bookmark: Bookmark): relationalStore.ValuesBucket {
@@ -11,6 +28,7 @@ export class BookmarkDao {
       'id': bookmark.id,
       'url': bookmark.url,
       'url_key': bookmark.urlKey,
+      'domain': domainOf(bookmark.url),
       'title': bookmark.title,
       'description': bookmark.description,
       'site_name': bookmark.siteName,
@@ -77,19 +95,38 @@ export class BookmarkDao {
 
   async insert(bookmark: Bookmark): Promise<void> {
     const store = Database.getStore();
-    await store.insert('bookmark', this.toBucket(bookmark));
-    await this.syncTags(bookmark.id, bookmark.tags);
+    await store.beginTransaction();
+    try {
+      await store.insert('bookmark', this.toBucket(bookmark));
+      await this.syncTags(bookmark.id, bookmark.tags);
+      store.commit();
+    } catch (error) {
+      store.rollBack();
+      throw new Error('DB_WRITE_FAILED');
+    }
   }
 
   async update(bookmark: Bookmark): Promise<void> {
     const store = Database.getStore();
+    await store.beginTransaction();
+    try {
+      await this.writeRow(bookmark);
+      await this.syncTags(bookmark.id, bookmark.tags);
+      store.commit();
+    } catch (error) {
+      store.rollBack();
+      throw new Error('DB_WRITE_FAILED');
+    }
+  }
+
+  private async writeRow(bookmark: Bookmark): Promise<void> {
+    const store = Database.getStore();
     const predicates = new relationalStore.RdbPredicates('bookmark');
     predicates.equalTo('id', bookmark.id);
     await store.update(this.toBucket(bookmark), predicates);
-    await this.syncTags(bookmark.id, bookmark.tags);
   }
 
-  private async syncTags(bookmarkId: string, tags: string[]): Promise<void> {
+  private async syncTags(bookmarkId: string, tags: string[], cache?: Map<string, string>): Promise<void> {
     const store = Database.getStore();
     await store.executeSql('DELETE FROM bookmark_tag WHERE bookmark_id = ?', [bookmarkId]);
     for (let i = 0; i < tags.length; i++) {
@@ -97,7 +134,7 @@ export class BookmarkDao {
       if (name.length === 0) {
         continue;
       }
-      const tagId = await this.ensureTag(name);
+      const tagId = await this.ensureTag(name, cache);
       await store.executeSql(
         'INSERT OR IGNORE INTO bookmark_tag (bookmark_id, tag_id) VALUES (?, ?)',
         [bookmarkId, tagId]
@@ -105,13 +142,37 @@ export class BookmarkDao {
     }
   }
 
-  private async ensureTag(name: string): Promise<string> {
+  private async syncNewTags(bookmarkId: string, tags: string[], cache?: Map<string, string>): Promise<void> {
+    const store = Database.getStore();
+    for (let i = 0; i < tags.length; i++) {
+      const name = tags[i].trim();
+      if (name.length === 0) {
+        continue;
+      }
+      const tagId = await this.ensureTag(name, cache);
+      await store.executeSql(
+        'INSERT OR IGNORE INTO bookmark_tag (bookmark_id, tag_id) VALUES (?, ?)',
+        [bookmarkId, tagId]
+      );
+    }
+  }
+
+  private async ensureTag(name: string, cache?: Map<string, string>): Promise<string> {
     const store = Database.getStore();
     const nameKey = name.toLowerCase();
+    if (cache !== undefined) {
+      const cached = cache.get(nameKey);
+      if (cached !== undefined) {
+        return cached;
+      }
+    }
     const resultSet = await store.querySql('SELECT id FROM tag WHERE name_key = ?', [nameKey]);
     if (resultSet.goToFirstRow()) {
       const id = resultSet.getString(0);
       resultSet.close();
+      if (cache !== undefined) {
+        cache.set(nameKey, id);
+      }
       return id;
     }
     resultSet.close();
@@ -120,6 +181,9 @@ export class BookmarkDao {
       'INSERT INTO tag (id, name, name_key, created_at) VALUES (?, ?, ?, ?)',
       [id, name, nameKey, Date.now()]
     );
+    if (cache !== undefined) {
+      cache.set(nameKey, id);
+    }
     return id;
   }
 
@@ -139,24 +203,38 @@ export class BookmarkDao {
   }
 
   private async fillTags(bookmarks: Bookmark[]): Promise<void> {
+    if (bookmarks.length === 0) {
+      return;
+    }
     const store = Database.getStore();
     const map = new Map<string, string[]>();
-    const resultSet = await store.querySql(
-      'SELECT bt.bookmark_id AS bid, t.name AS name FROM bookmark_tag bt ' +
-      'JOIN tag t ON t.id = bt.tag_id ORDER BY t.name',
-      []
-    );
-    while (resultSet.goToNextRow()) {
-      const bid = resultSet.getString(resultSet.getColumnIndex('bid'));
-      const name = resultSet.getString(resultSet.getColumnIndex('name'));
-      const existing = map.get(bid);
-      if (existing === undefined) {
-        map.set(bid, [name]);
-      } else {
-        existing.push(name);
+    const chunk = 400;
+    for (let start = 0; start < bookmarks.length; start = start + chunk) {
+      const end = start + chunk < bookmarks.length ? start + chunk : bookmarks.length;
+      const placeholders: string[] = [];
+      const args: relationalStore.ValueType[] = [];
+      for (let i = start; i < end; i++) {
+        placeholders.push('?');
+        args.push(bookmarks[i].id);
       }
+      const resultSet = await store.querySql(
+        'SELECT bt.bookmark_id AS bid, t.name AS name FROM bookmark_tag bt ' +
+        `JOIN tag t ON t.id = bt.tag_id WHERE bt.bookmark_id IN (${placeholders.join(',')}) ` +
+        'ORDER BY t.name',
+        args
+      );
+      while (resultSet.goToNextRow()) {
+        const bid = resultSet.getString(resultSet.getColumnIndex('bid'));
+        const name = resultSet.getString(resultSet.getColumnIndex('name'));
+        const existing = map.get(bid);
+        if (existing === undefined) {
+          map.set(bid, [name]);
+        } else {
+          existing.push(name);
+        }
+      }
+      resultSet.close();
     }
-    resultSet.close();
     for (let i = 0; i < bookmarks.length; i++) {
       const item = bookmarks[i];
       const tags = map.get(item.id);
@@ -178,6 +256,166 @@ export class BookmarkDao {
     resultSet.close();
     await this.fillTags(bookmarks);
     return bookmarks;
+  }
+
+  private buildWhere(query: BookmarkQuery): WhereClause {
+    const where = new WhereClause();
+    const parts: string[] = [];
+    if (query.filter === StreamFilter.TRASH) {
+      parts.push('deleted = 1');
+    } else {
+      parts.push('deleted = 0');
+      if (query.filter === StreamFilter.ARCHIVED) {
+        parts.push('archived = 1');
+      } else {
+        parts.push('archived = 0');
+        if (query.filter === StreamFilter.UNREAD) {
+          parts.push('read_state = 0');
+        }
+        if (query.filter === StreamFilter.STARRED) {
+          parts.push('starred = 1');
+        }
+      }
+    }
+    if (query.tag.length > 0) {
+      parts.push(
+        'EXISTS (SELECT 1 FROM bookmark_tag bt JOIN tag t ON t.id = bt.tag_id ' +
+        'WHERE bt.bookmark_id = bookmark.id AND t.name = ?)'
+      );
+      where.args.push(query.tag);
+    }
+    const keyword = query.keyword.trim().toLowerCase();
+    if (keyword.length > 0) {
+      parts.push('search_text LIKE ? ESCAPE \'\\\'');
+      where.args.push(`%${escapeLike(keyword)}%`);
+    }
+    where.sql = parts.join(' AND ');
+    return where;
+  }
+
+  async queryPage(query: BookmarkQuery, offset: number, limit: number): Promise<Bookmark[]> {
+    const store = Database.getStore();
+    const where = this.buildWhere(query);
+    const order = query.sort === 1 ? 'domain ASC, created_at DESC' : 'created_at DESC';
+    const args: relationalStore.ValueType[] = [];
+    for (let i = 0; i < where.args.length; i++) {
+      args.push(where.args[i]);
+    }
+    args.push(limit + 1);
+    args.push(offset);
+    const resultSet = await store.querySql(
+      `SELECT * FROM bookmark WHERE ${where.sql} ORDER BY ${order} LIMIT ? OFFSET ?`,
+      args
+    );
+    const bookmarks: Bookmark[] = [];
+    while (resultSet.goToNextRow()) {
+      bookmarks.push(this.readRow(resultSet));
+    }
+    resultSet.close();
+    await this.fillTags(bookmarks);
+    return bookmarks;
+  }
+
+  async listForCard(limit: number): Promise<Bookmark[]> {
+    const store = Database.getStore();
+    const resultSet = await store.querySql(
+      'SELECT * FROM bookmark WHERE deleted = 0 AND archived = 0 ORDER BY created_at DESC LIMIT ?',
+      [limit]
+    );
+    const bookmarks: Bookmark[] = [];
+    while (resultSet.goToNextRow()) {
+      bookmarks.push(this.readRow(resultSet));
+    }
+    resultSet.close();
+    return bookmarks;
+  }
+
+  async summaryCounts(): Promise<LibraryCounts> {
+    const store = Database.getStore();
+    const counts = new LibraryCounts();
+    const resultSet = await store.querySql(
+      'SELECT ' +
+      'COALESCE(SUM(CASE WHEN deleted = 0 AND archived = 0 THEN 1 ELSE 0 END), 0) AS total, ' +
+      'COALESCE(SUM(CASE WHEN deleted = 0 AND archived = 0 AND read_state = 0 THEN 1 ELSE 0 END), 0) AS unread, ' +
+      'COALESCE(SUM(CASE WHEN deleted = 0 AND archived = 0 AND starred = 1 THEN 1 ELSE 0 END), 0) AS starred, ' +
+      'COALESCE(SUM(CASE WHEN deleted = 0 AND archived = 1 THEN 1 ELSE 0 END), 0) AS archived, ' +
+      'COALESCE(SUM(CASE WHEN deleted = 1 THEN 1 ELSE 0 END), 0) AS trash ' +
+      'FROM bookmark',
+      []
+    );
+    if (resultSet.goToFirstRow()) {
+      counts.total = resultSet.getLong(resultSet.getColumnIndex('total'));
+      counts.unread = resultSet.getLong(resultSet.getColumnIndex('unread'));
+      counts.starred = resultSet.getLong(resultSet.getColumnIndex('starred'));
+      counts.archived = resultSet.getLong(resultSet.getColumnIndex('archived'));
+      counts.trash = resultSet.getLong(resultSet.getColumnIndex('trash'));
+    }
+    resultSet.close();
+    return counts;
+  }
+
+  async listUrlKeys(): Promise<Set<string>> {
+    const store = Database.getStore();
+    const keys = new Set<string>();
+    const resultSet = await store.querySql('SELECT url_key FROM bookmark', []);
+    while (resultSet.goToNextRow()) {
+      keys.add(resultSet.getString(0));
+    }
+    resultSet.close();
+    return keys;
+  }
+
+  async countCreatedSince(since: number): Promise<number> {
+    const store = Database.getStore();
+    const resultSet = await store.querySql(
+      'SELECT COUNT(*) AS cnt FROM bookmark WHERE deleted = 0 AND created_at >= ?',
+      [since]
+    );
+    let count = 0;
+    if (resultSet.goToFirstRow()) {
+      count = resultSet.getLong(0);
+    }
+    resultSet.close();
+    return count;
+  }
+
+  async countConflicts(): Promise<number> {
+    const store = Database.getStore();
+    const resultSet = await store.querySql('SELECT COUNT(*) AS cnt FROM conflict', []);
+    let count = 0;
+    if (resultSet.goToFirstRow()) {
+      count = resultSet.getLong(0);
+    }
+    resultSet.close();
+    return count;
+  }
+
+  async listConflicts(): Promise<ConflictRecord[]> {
+    const store = Database.getStore();
+    const resultSet = await store.querySql('SELECT * FROM conflict ORDER BY created_at DESC', []);
+    const records: ConflictRecord[] = [];
+    while (resultSet.goToNextRow()) {
+      const record = new ConflictRecord();
+      record.id = resultSet.getString(resultSet.getColumnIndex('id'));
+      record.bookmarkId = resultSet.getString(resultSet.getColumnIndex('bookmark_id'));
+      record.localJson = resultSet.getString(resultSet.getColumnIndex('local_json'));
+      record.remoteJson = resultSet.getString(resultSet.getColumnIndex('remote_json'));
+      record.reason = resultSet.getString(resultSet.getColumnIndex('reason'));
+      record.createdAt = resultSet.getLong(resultSet.getColumnIndex('created_at'));
+      records.push(record);
+    }
+    resultSet.close();
+    return records;
+  }
+
+  async deleteConflict(id: string): Promise<void> {
+    const store = Database.getStore();
+    await store.executeSql('DELETE FROM conflict WHERE id = ?', [id]);
+  }
+
+  async clearConflicts(): Promise<void> {
+    const store = Database.getStore();
+    await store.executeSql('DELETE FROM conflict');
   }
 
   async findById(id: string): Promise<Bookmark | undefined> {
@@ -256,17 +494,6 @@ export class BookmarkDao {
     await store.insert('conflict', values);
   }
 
-  async countConflicts(): Promise<number> {
-    const store = Database.getStore();
-    const resultSet = await store.querySql('SELECT COUNT(*) AS cnt FROM conflict', []);
-    let count = 0;
-    if (resultSet.goToFirstRow()) {
-      count = resultSet.getLong(0);
-    }
-    resultSet.close();
-    return count;
-  }
-
   async setStarred(id: string, starred: boolean): Promise<void> {
     const store = Database.getStore();
     await store.executeSql(
@@ -292,55 +519,67 @@ export class BookmarkDao {
     );
   }
 
-  async setNote(id: string, note: string): Promise<void> {
+  // column is a fixed literal from the three callers below, never user input.
+  private async setSearchField(id: string, column: string, value: string): Promise<void> {
     const store = Database.getStore();
     const now = Date.now();
-    await store.executeSql(
-      'UPDATE bookmark SET note = ?, updated_at = ?, rev = rev + 1, dirty = 1 WHERE id = ?',
-      [note, now, id]
-    );
-    const bookmark = await this.findById(id);
-    if (bookmark !== undefined) {
-      bookmark.rebuildSearch();
+    await store.beginTransaction();
+    try {
       await store.executeSql(
-        'UPDATE bookmark SET search_text = ? WHERE id = ?',
-        [bookmark.searchText, id]
+        `UPDATE bookmark SET ${column} = ?, updated_at = ?, rev = rev + 1, dirty = 1 WHERE id = ?`,
+        [value, now, id]
       );
+      const bookmark = await this.findById(id);
+      if (bookmark !== undefined) {
+        bookmark.rebuildSearch();
+        await store.executeSql(
+          'UPDATE bookmark SET search_text = ? WHERE id = ?',
+          [bookmark.searchText, id]
+        );
+      }
+      store.commit();
+    } catch (error) {
+      store.rollBack();
+      throw new Error('DB_WRITE_FAILED');
     }
+  }
+
+  async setNote(id: string, note: string): Promise<void> {
+    await this.setSearchField(id, 'note', note);
   }
 
   async setExcerpt(id: string, excerpt: string): Promise<void> {
-    const store = Database.getStore();
-    const now = Date.now();
-    await store.executeSql(
-      'UPDATE bookmark SET excerpt = ?, updated_at = ?, rev = rev + 1, dirty = 1 WHERE id = ?',
-      [excerpt, now, id]
-    );
-    const bookmark = await this.findById(id);
-    if (bookmark !== undefined) {
-      bookmark.rebuildSearch();
-      await store.executeSql(
-        'UPDATE bookmark SET search_text = ? WHERE id = ?',
-        [bookmark.searchText, id]
-      );
-    }
+    await this.setSearchField(id, 'excerpt', excerpt);
   }
 
   async setTitle(id: string, title: string): Promise<void> {
-    const store = Database.getStore();
-    const now = Date.now();
-    await store.executeSql(
-      'UPDATE bookmark SET title = ?, updated_at = ?, rev = rev + 1, dirty = 1 WHERE id = ?',
-      [title, now, id]
-    );
+    await this.setSearchField(id, 'title', title);
+  }
+
+  async editContent(id: string, title: string, note: string, excerpt: string, tags: string[]): Promise<Bookmark | undefined> {
     const bookmark = await this.findById(id);
-    if (bookmark !== undefined) {
-      bookmark.rebuildSearch();
-      await store.executeSql(
-        'UPDATE bookmark SET search_text = ? WHERE id = ?',
-        [bookmark.searchText, id]
-      );
+    if (bookmark === undefined) {
+      return undefined;
     }
+    bookmark.title = title;
+    bookmark.note = note;
+    bookmark.excerpt = excerpt;
+    bookmark.tags = tags;
+    bookmark.updatedAt = Date.now();
+    bookmark.rev = bookmark.rev + 1;
+    bookmark.dirty = true;
+    bookmark.rebuildSearch();
+    const store = Database.getStore();
+    await store.beginTransaction();
+    try {
+      await this.writeRow(bookmark);
+      await this.syncTags(bookmark.id, tags);
+      store.commit();
+    } catch (error) {
+      store.rollBack();
+      throw new Error('DB_WRITE_FAILED');
+    }
+    return bookmark;
   }
 
   async softDelete(id: string): Promise<void> {
@@ -424,12 +663,16 @@ export class BookmarkDao {
   }
 
   async purgeExpired(days: number): Promise<number> {
-    const cutoff = Date.now() - days * 86400000;
-    const expired = await this.listTrashBefore(cutoff);
-    for (let i = 0; i < expired.length; i++) {
-      await this.purge(expired[i]);
+    const ids = await this.listExpiredIds(days);
+    for (let i = 0; i < ids.length; i++) {
+      await this.purge(ids[i]);
     }
-    return expired.length;
+    return ids.length;
+  }
+
+  async listExpiredIds(days: number): Promise<string[]> {
+    const cutoff = Date.now() - days * 86400000;
+    return this.listTrashBefore(cutoff);
   }
 
   private async listTrashBefore(cutoff: number): Promise<string[]> {
@@ -449,9 +692,11 @@ export class BookmarkDao {
   async listTags(): Promise<TagCount[]> {
     const store = Database.getStore();
     const resultSet = await store.querySql(
-      'SELECT t.id AS id, t.name AS name, COUNT(bt.bookmark_id) AS cnt ' +
-      'FROM tag t LEFT JOIN bookmark_tag bt ON bt.tag_id = t.id ' +
-      'GROUP BY t.id ORDER BY cnt DESC, t.name ASC',
+      'SELECT t.id AS id, t.name AS name, COUNT(b.id) AS cnt ' +
+      'FROM tag t ' +
+      'LEFT JOIN bookmark_tag bt ON bt.tag_id = t.id ' +
+      'LEFT JOIN bookmark b ON b.id = bt.bookmark_id AND b.deleted = 0 ' +
+      'GROUP BY t.id HAVING cnt > 0 ORDER BY cnt DESC, t.name ASC',
       []
     );
     const tags: TagCount[] = [];
@@ -466,45 +711,210 @@ export class BookmarkDao {
     return tags;
   }
 
-  async renameTag(id: string, name: string): Promise<void> {
+  private async findTagIdByNameKey(nameKey: string): Promise<string> {
     const store = Database.getStore();
-    await store.executeSql(
-      'UPDATE tag SET name = ?, name_key = ? WHERE id = ?',
-      [name, name.toLowerCase(), id]
+    const resultSet = await store.querySql('SELECT id FROM tag WHERE name_key = ?', [nameKey]);
+    let id = '';
+    if (resultSet.goToFirstRow()) {
+      id = resultSet.getString(0);
+    }
+    resultSet.close();
+    return id;
+  }
+
+  private async listBookmarkIdsByTag(tagId: string): Promise<string[]> {
+    const store = Database.getStore();
+    const ids: string[] = [];
+    const resultSet = await store.querySql(
+      'SELECT bookmark_id FROM bookmark_tag WHERE tag_id = ?',
+      [tagId]
     );
+    while (resultSet.goToNextRow()) {
+      ids.push(resultSet.getString(0));
+    }
+    resultSet.close();
+    return ids;
+  }
+
+  private async tagNameOf(tagId: string): Promise<string> {
+    const store = Database.getStore();
+    const resultSet = await store.querySql('SELECT name FROM tag WHERE id = ?', [tagId]);
+    let name = '';
+    if (resultSet.goToFirstRow()) {
+      name = resultSet.getString(0);
+    }
+    resultSet.close();
+    return name;
+  }
+
+  // Snapshot the affected rows before mutating tag links: reads inside the transaction
+  // see the pre-change tag set, so search_text must be computed from these copies.
+  private async loadBookmarksByTag(tagId: string): Promise<Bookmark[]> {
+    const ids = await this.listBookmarkIdsByTag(tagId);
+    const bookmarks: Bookmark[] = [];
+    for (let i = 0; i < ids.length; i++) {
+      const bookmark = await this.findById(ids[i]);
+      if (bookmark !== undefined) {
+        bookmarks.push(bookmark);
+      }
+    }
+    return bookmarks;
+  }
+
+  private dedupeTags(tags: string[]): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (let i = 0; i < tags.length; i++) {
+      const key = tags[i].toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push(tags[i]);
+      }
+    }
+    return result;
+  }
+
+  private remapTag(bookmarks: Bookmark[], fromName: string, toName: string): void {
+    const from = fromName.toLowerCase();
+    for (let i = 0; i < bookmarks.length; i++) {
+      const next: string[] = [];
+      const tags = bookmarks[i].tags;
+      for (let j = 0; j < tags.length; j++) {
+        if (tags[j].toLowerCase() !== from) {
+          next.push(tags[j]);
+        } else if (toName.length > 0) {
+          next.push(toName);
+        }
+      }
+      bookmarks[i].tags = this.dedupeTags(next);
+    }
+  }
+
+  private async writeTagChange(bookmarks: Bookmark[]): Promise<void> {
+    const store = Database.getStore();
+    const now = Date.now();
+    for (let i = 0; i < bookmarks.length; i++) {
+      const bookmark = bookmarks[i];
+      bookmark.rebuildSearch();
+      await store.executeSql(
+        'UPDATE bookmark SET updated_at = ?, rev = rev + 1, dirty = 1, search_text = ? WHERE id = ?',
+        [now, bookmark.searchText, bookmark.id]
+      );
+    }
+  }
+
+  async renameTag(id: string, name: string): Promise<boolean> {
+    const targetId = await this.findTagIdByNameKey(name.toLowerCase());
+    if (targetId.length > 0 && targetId !== id) {
+      await this.mergeTags(id, targetId);
+      return true;
+    }
+    const store = Database.getStore();
+    await store.beginTransaction();
+    try {
+      const oldName = await this.tagNameOf(id);
+      const affected = await this.loadBookmarksByTag(id);
+      await store.executeSql(
+        'UPDATE tag SET name = ?, name_key = ? WHERE id = ?',
+        [name, name.toLowerCase(), id]
+      );
+      this.remapTag(affected, oldName, name);
+      await this.writeTagChange(affected);
+      store.commit();
+    } catch (error) {
+      store.rollBack();
+      throw new Error('DB_WRITE_FAILED');
+    }
+    return false;
   }
 
   async deleteTag(id: string): Promise<void> {
     const store = Database.getStore();
-    await store.executeSql('DELETE FROM bookmark_tag WHERE tag_id = ?', [id]);
-    await store.executeSql('DELETE FROM tag WHERE id = ?', [id]);
+    await store.beginTransaction();
+    try {
+      const name = await this.tagNameOf(id);
+      const affected = await this.loadBookmarksByTag(id);
+      await store.executeSql('DELETE FROM bookmark_tag WHERE tag_id = ?', [id]);
+      await store.executeSql('DELETE FROM tag WHERE id = ?', [id]);
+      this.remapTag(affected, name, '');
+      await this.writeTagChange(affected);
+      store.commit();
+    } catch (error) {
+      store.rollBack();
+      throw new Error('DB_WRITE_FAILED');
+    }
   }
 
   async mergeTags(sourceId: string, targetId: string): Promise<void> {
     const store = Database.getStore();
+    await store.beginTransaction();
+    try {
+      const sourceName = await this.tagNameOf(sourceId);
+      const targetName = await this.tagNameOf(targetId);
+      const affected = await this.loadBookmarksByTag(sourceId);
+      await store.executeSql(
+        'INSERT OR IGNORE INTO bookmark_tag (bookmark_id, tag_id) ' +
+        'SELECT bookmark_id, ? FROM bookmark_tag WHERE tag_id = ?',
+        [targetId, sourceId]
+      );
+      await store.executeSql('DELETE FROM bookmark_tag WHERE tag_id = ?', [sourceId]);
+      await store.executeSql('DELETE FROM tag WHERE id = ?', [sourceId]);
+      this.remapTag(affected, sourceName, targetName);
+      await this.writeTagChange(affected);
+      store.commit();
+    } catch (error) {
+      store.rollBack();
+      throw new Error('DB_WRITE_FAILED');
+    }
+  }
+
+  async insertBatch(bookmarks: Bookmark[]): Promise<void> {
+    const store = Database.getStore();
+    const tagCache = new Map<string, string>();
+    await store.beginTransaction();
+    try {
+      for (let i = 0; i < bookmarks.length; i++) {
+        await store.insert('bookmark', this.toBucket(bookmarks[i]));
+        await this.syncNewTags(bookmarks[i].id, bookmarks[i].tags, tagCache);
+      }
+      store.commit();
+    } catch (error) {
+      store.rollBack();
+      throw new Error('DB_WRITE_FAILED');
+    }
+  }
+
+  async backfillDomains(): Promise<number> {
+    const store = Database.getStore();
     const resultSet = await store.querySql(
-      'SELECT bookmark_id FROM bookmark_tag WHERE tag_id = ?',
-      [sourceId]
+      'SELECT id, url FROM bookmark WHERE domain = \'\'',
+      []
     );
-    const bookmarkIds: string[] = [];
+    const ids: string[] = [];
+    const urls: string[] = [];
     while (resultSet.goToNextRow()) {
-      bookmarkIds.push(resultSet.getString(0));
+      ids.push(resultSet.getString(0));
+      urls.push(resultSet.getString(1));
     }
     resultSet.close();
-    for (let i = 0; i < bookmarkIds.length; i++) {
-      await store.executeSql(
-        'INSERT OR IGNORE INTO bookmark_tag (bookmark_id, tag_id) VALUES (?, ?)',
-        [bookmarkIds[i], targetId]
-      );
+    for (let i = 0; i < ids.length; i++) {
+      await store.executeSql('UPDATE bookmark SET domain = ? WHERE id = ?', [domainOf(urls[i]), ids[i]]);
     }
-    await this.deleteTag(sourceId);
+    return ids.length;
   }
 
   async clearAll(): Promise<void> {
     const store = Database.getStore();
-    await store.executeSql('DELETE FROM bookmark');
-    await store.executeSql('DELETE FROM tag');
-    await store.executeSql('DELETE FROM bookmark_tag');
-    await store.executeSql('DELETE FROM tombstone');
+    await store.beginTransaction();
+    try {
+      await store.executeSql('DELETE FROM bookmark');
+      await store.executeSql('DELETE FROM tag');
+      await store.executeSql('DELETE FROM bookmark_tag');
+      await store.executeSql('DELETE FROM conflict');
+      store.commit();
+    } catch (error) {
+      store.rollBack();
+      throw new Error('DB_WRITE_FAILED');
+    }
   }
 }

@@ -8,6 +8,7 @@ const SQL_BOOKMARK: string =
   'id TEXT PRIMARY KEY, ' +
   'url TEXT NOT NULL, ' +
   'url_key TEXT NOT NULL, ' +
+  'domain TEXT NOT NULL DEFAULT \'\', ' +
   'title TEXT NOT NULL DEFAULT \'\', ' +
   'description TEXT NOT NULL DEFAULT \'\', ' +
   'site_name TEXT NOT NULL DEFAULT \'\', ' +
@@ -81,6 +82,7 @@ const SQL_INDEXES: string[] = [
   'CREATE INDEX IF NOT EXISTS idx_bookmark_stream ON bookmark(deleted, archived, created_at DESC)',
   'CREATE INDEX IF NOT EXISTS idx_bookmark_starred ON bookmark(deleted, starred, created_at DESC)',
   'CREATE INDEX IF NOT EXISTS idx_bookmark_read ON bookmark(deleted, read_state, created_at DESC)',
+  'CREATE INDEX IF NOT EXISTS idx_bookmark_domain ON bookmark(deleted, domain)',
   'CREATE UNIQUE INDEX IF NOT EXISTS idx_tag_name_key ON tag(name_key)',
   'CREATE INDEX IF NOT EXISTS idx_bookmark_tag_tag ON bookmark_tag(tag_id)'
 ];
@@ -113,6 +115,10 @@ export class Database {
     }
     try {
       await store.executeSql('ALTER TABLE bookmark ADD COLUMN link_checked_at INTEGER NOT NULL DEFAULT 0');
+    } catch (error) {
+    }
+    try {
+      await store.executeSql('ALTER TABLE bookmark ADD COLUMN domain TEXT NOT NULL DEFAULT \'\'');
     } catch (error) {
     }
     for (let i = 0; i < SQL_INDEXES.length; i++) {
