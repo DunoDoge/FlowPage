@@ -42,8 +42,12 @@ export class SyncEngine {
     try {
       const json = SyncRecord.fromBookmark(bookmark).toJson();
       const etag = await transport.put(bookmark.id, json, remoteEtag);
-      await repo.setRemoteEtagIfUnchanged(bookmark.id, etag, expectedRev, expectedUpdatedAt);
-      report.uploaded = report.uploaded + 1;
+      const applied = await repo.setRemoteEtagIfUnchanged(bookmark.id, etag, expectedRev, expectedUpdatedAt);
+      if (applied) {
+        report.uploaded = report.uploaded + 1;
+      } else {
+        report.skipped = report.skipped + 1;
+      }
     } catch (error) {
       SyncEngine.fail(report, error);
     }

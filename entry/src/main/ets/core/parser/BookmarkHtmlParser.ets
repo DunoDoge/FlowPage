@@ -1,6 +1,13 @@
 import { ImportedBookmark } from '../../model/ImportResult';
 import { domainOf, normalizeUrl } from '../../common/UrlUtil';
 
+export class ParsedBookmarks {
+  items: ImportedBookmark[] = [];
+  invalidCount: number = 0;
+  inFileDuplicates: number = 0;
+  invalidUrls: string[] = [];
+}
+
 function decodeEntities(input: string): string {
   let text = input;
   const pairs: string[][] = [
@@ -28,8 +35,12 @@ function cleanText(input: string): string {
 
 export class BookmarkHtmlParser {
   static parse(html: string): ImportedBookmark[] {
+    return BookmarkHtmlParser.parseAll(html).items;
+  }
+
+  static parseAll(html: string): ParsedBookmarks {
     const lines = html.split('\n');
-    const result: ImportedBookmark[] = [];
+    const parsed = new ParsedBookmarks();
     const stack: string[] = [];
     const seen = new Set<string>();
     let pendingFolder = '';
@@ -71,9 +82,12 @@ export class BookmarkHtmlParser {
       const rawUrl = decodeEntities(hrefMatch[1]);
       const normalized = normalizeUrl(rawUrl);
       if (normalized.length === 0) {
+        parsed.invalidCount = parsed.invalidCount + 1;
+        parsed.invalidUrls.push(rawUrl);
         continue;
       }
       if (seen.has(normalized)) {
+        parsed.inFileDuplicates = parsed.inFileDuplicates + 1;
         continue;
       }
       seen.add(normalized);
@@ -99,10 +113,9 @@ export class BookmarkHtmlParser {
       bookmark.url = rawUrl;
       bookmark.title = title;
       bookmark.folderPath = parts.join('/');
-      result.push(bookmark);
+      parsed.items.push(bookmark);
     }
-
-    return result;
+    return parsed;
   }
 
   static countFolders(items: ImportedBookmark[]): number {

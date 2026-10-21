@@ -9,6 +9,7 @@ export class ImportResult {
   imported: number = 0;
   skipped: number = 0;
   failed: number = 0;
+  cancelled: boolean = false;
   failedUrls: string[] = [];
   folderCount: number = 0;
 }

@@ -9,6 +9,7 @@ export const CARD_KEY_TODAY_DOMAIN: string = 'today_domain';
 export const CARD_KEY_TODAY_ID: string = 'today_id';
 export const CARD_KEY_TOTAL_COUNT: string = 'total_count';
 export const CARD_KEY_RECENT_LINES: string = 'recent_lines';
+export const CARD_KEY_CANDIDATES: string = 'today_candidates';
 
 const FORM_PREFERENCES_NAME: string = 'flowpage_card_forms';
 const FORM_IDS_KEY: string = 'form_ids';
@@ -21,6 +22,7 @@ export class CardValues {
   todayId: string = '';
   recentLines: string = '';
   totalCount: string = '0';
+  candidates: string = '';
 }
 
 export class CardSnapshot {
@@ -33,11 +35,13 @@ export class CardSnapshot {
       const id = store.getSync(CARD_KEY_TODAY_ID, '');
       const lines = store.getSync(CARD_KEY_RECENT_LINES, '');
       const count = store.getSync(CARD_KEY_TOTAL_COUNT, '0');
+      const candidates = store.getSync(CARD_KEY_CANDIDATES, '');
       values.todayTitle = typeof title === 'string' ? title : '纸还空着';
       values.todayDomain = typeof domain === 'string' ? domain : '';
       values.todayId = typeof id === 'string' ? id : '';
       values.recentLines = typeof lines === 'string' ? lines : '';
       values.totalCount = typeof count === 'string' ? count : '0';
+      values.candidates = typeof candidates === 'string' ? candidates : '';
     } catch (error) {
       hilog.error(DOMAIN, TAG, 'Failed to read card snapshot reason=%{public}s', JSON.stringify(error));
     }
@@ -51,7 +55,8 @@ export class CardSnapshot {
       'today_domain': values.todayDomain,
       'today_id': values.todayId,
       'recent_lines': values.recentLines,
-      'total_count': values.totalCount
+      'total_count': values.totalCount,
+      'today_candidates': values.candidates
     };
     return formBindingData.createFormBindingData(data);
   }

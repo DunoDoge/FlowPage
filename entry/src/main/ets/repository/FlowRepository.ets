@@ -2,6 +2,9 @@ import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { Bookmark } from '../model/Bookmark';
+import { BookmarkPage, BookmarkQuery } from '../model/BookmarkQuery';
+import { ConflictRecord } from '../model/Conflict';
+import { ImportPreview } from '../model/ImportPreview';
 import { ImportResult } from '../model/ImportResult';
 import { TagCount } from '../model/Tag';
 import { Tombstone } from '../model/Tombstone';
@@ -12,10 +15,12 @@ import { SnapshotStore } from '../core/service/SnapshotStore';
 import { BookmarkHtmlParser } from '../core/parser/BookmarkHtmlParser';
 import { SyncRecord } from '../core/sync/SyncRecord';
 import { AppState } from '../common/AppState';
-import { BookmarkSource, ReadState, SnapshotStatus } from '../common/Constants';
+import { BookmarkSource, SnapshotStatus } from '../common/Constants';
+import { cardLineOf, cardTitleOf } from '../common/CardFormat';
 import { domainOf, normalizeUrl } from '../common/UrlUtil';
 import { CardPublisher } from '../core/service/CardPublisher';
 import {
+  CARD_KEY_CANDIDATES,
   CARD_KEY_RECENT_LINES,
   CARD_KEY_TODAY_DOMAIN,
   CARD_KEY_TODAY_ID,
@@ -23,6 +28,9 @@ import {
   CARD_KEY_TOTAL_COUNT,
   CARD_PREFERENCES_NAME
 } from '../core/service/CardSnapshot';
+
+const SETTINGS_NAME: string = 'flowpage_settings';
+const AUTO_SNAPSHOT_KEY: string = 'auto_snapshot';
 
 export class SaveOutcome {
   bookmark: Bookmark = new Bookmark();
@@ -35,6 +43,12 @@ export class LibrarySummary {
   starred: number = 0;
   archived: number = 0;
   trash: number = 0;
+}
+
+export class ImportOptions {
+  keepFolders: boolean = true;
+  onProgress: (done: number, total: number) => void = (done: number, total: number) => {};
+  shouldCancel: () => boolean = () => false;
 }
 
 class ExportDocument {
@@ -66,7 +80,8 @@ export class FlowRepository {
   async init(context: common.Context): Promise<void> {
     this.context = context;
     await Database.init(context);
-    await this.dao.purgeExpired(30);
+    await this.dao.backfillDomains();
+    await this.purgeExpired();
   }
 
   private requireContext(): common.Context {
@@ -74,6 +89,19 @@ export class FlowRepository {
       throw new Error('Repository is not initialized');
     }
     return this.context;
+  }
+
+  autoSnapshotEnabled(): boolean {
+    if (this.context === undefined) {
+      return true;
+    }
+    try {
+      const store = preferences.getPreferencesSync(this.context, { name: SETTINGS_NAME });
+      const value = store.getSync(AUTO_SNAPSHOT_KEY, true);
+      return typeof value === 'boolean' ? value : true;
+    } catch (error) {
+      return true;
+    }
   }
 
   private notify(): void {
@@ -120,33 +148,36 @@ export class FlowRepository {
     if (this.context === undefined) {
       return;
     }
-    const all = await this.dao.listAll(false);
-    const active: Bookmark[] = [];
-    for (let i = 0; i < all.length; i++) {
-      if (!all[i].archived) {
-        active.push(all[i]);
-      }
-    }
+    const active = await this.dao.listForCard(10);
+    const counts = await this.dao.summaryCounts();
     let today: Bookmark | undefined = undefined;
     if (active.length > 0) {
       const index = new Date().getDate() % active.length;
       today = active[index];
     }
     const store = preferences.getPreferencesSync(this.context, { name: CARD_PREFERENCES_NAME });
-    store.putSync(CARD_KEY_TODAY_TITLE, today !== undefined ? today.title : '纸还空着');
+    store.putSync(CARD_KEY_TODAY_TITLE, today !== undefined ? cardTitleOf(today.title) : '纸还空着');
     store.putSync(CARD_KEY_TODAY_DOMAIN, today !== undefined ? domainOf(today.url) : '');
     store.putSync(CARD_KEY_TODAY_ID, today !== undefined ? today.id : '');
-    store.putSync(CARD_KEY_TOTAL_COUNT, `${active.length}`);
-    const limit = active.length < 3 ? active.length : 3;
-    let lines = '';
-    for (let i = 0; i < limit; i++) {
-      lines += `${active[i].title}|${domainOf(active[i].url)}|${active[i].id}`;
-      if (i < limit - 1) {
-        lines += '\n';
-      }
+    store.putSync(CARD_KEY_TOTAL_COUNT, `${counts.total}`);
+    const lines: string[] = [];
+    for (let i = 0; i < active.length; i++) {
+      lines.push(cardLineOf(active[i].title, domainOf(active[i].url), active[i].id));
     }
-    store.putSync(CARD_KEY_RECENT_LINES, lines);
+    const recentLimit = lines.length < 3 ? lines.length : 3;
+    store.putSync(CARD_KEY_RECENT_LINES, lines.slice(0, recentLimit).join('\n'));
+    store.putSync(CARD_KEY_CANDIDATES, lines.join('\n'));
     await store.flush();
+  }
+
+  // SyncRecord carries neither the local snapshot nor folderPath/source, so a remote-wins
+  // overwrite must keep the current row's values instead of resetting them to empty/0.
+  private carryLocalFields(target: Bookmark, existing: Bookmark): void {
+    target.snapshotPath = existing.snapshotPath;
+    target.snapshotStatus = existing.snapshotStatus;
+    target.snapshotAt = existing.snapshotAt;
+    target.folderPath = existing.folderPath;
+    target.source = existing.source;
   }
 
   async upsertFromRemote(record: SyncRecord, etag: string): Promise<boolean> {
@@ -174,9 +205,7 @@ export class FlowRepository {
         bookmark.linkStatus = existing.linkStatus;
         bookmark.linkCheckedAt = existing.linkCheckedAt;
       }
-      bookmark.snapshotPath = existing.snapshotPath;
-      bookmark.snapshotStatus = existing.snapshotStatus;
-      bookmark.snapshotAt = existing.snapshotAt;
+      this.carryLocalFields(bookmark, existing);
       bookmark.rev = existing.rev + 1;
       await this.dao.update(bookmark);
     } else {
@@ -210,30 +239,35 @@ export class FlowRepository {
     return this.dao.listAll(includeDeleted);
   }
 
+  async queryPage(query: BookmarkQuery, offset: number, limit: number): Promise<BookmarkPage> {
+    const rows = await this.dao.queryPage(query, offset, limit);
+    const page = new BookmarkPage();
+    page.hasMore = rows.length > limit;
+    if (page.hasMore) {
+      rows.pop();
+    }
+    page.items = rows;
+    return page;
+  }
+
+  async countToday(): Promise<number> {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    return this.dao.countCreatedSince(start.getTime());
+  }
+
   async get(id: string): Promise<Bookmark | undefined> {
     return this.dao.findById(id);
   }
 
   async summary(): Promise<LibrarySummary> {
-    const all = await this.dao.listAll(true);
+    const counts = await this.dao.summaryCounts();
     const summary = new LibrarySummary();
-    for (let i = 0; i < all.length; i++) {
-      const item = all[i];
-      if (item.deleted) {
-        summary.trash = summary.trash + 1;
-        continue;
-      }
-      summary.total = summary.total + 1;
-      if (item.readState === ReadState.UNREAD) {
-        summary.unread = summary.unread + 1;
-      }
-      if (item.starred) {
-        summary.starred = summary.starred + 1;
-      }
-      if (item.archived) {
-        summary.archived = summary.archived + 1;
-      }
-    }
+    summary.total = counts.total;
+    summary.unread = counts.unread;
+    summary.starred = counts.starred;
+    summary.archived = counts.archived;
+    summary.trash = counts.trash;
     return summary;
   }
 
@@ -255,6 +289,7 @@ export class FlowRepository {
         existing.deleted = false;
         existing.updatedAt = Date.now();
         existing.rev = existing.rev + 1;
+        existing.dirty = true;
         await this.dao.update(existing);
         outcome.bookmark = existing;
         outcome.created = true;
@@ -283,11 +318,13 @@ export class FlowRepository {
     if (bookmark === undefined) {
       return;
     }
-    const metadata = await MetadataService.fetch(bookmark.url);
+    const autoSnapshot = this.autoSnapshotEnabled();
+    const metadata = await MetadataService.fetch(bookmark.url, autoSnapshot);
     if (!metadata.success) {
-      bookmark.snapshotStatus = SnapshotStatus.FAILED;
+      bookmark.snapshotStatus = autoSnapshot ? SnapshotStatus.FAILED : SnapshotStatus.OFF;
       bookmark.updatedAt = Date.now();
       bookmark.rev = bookmark.rev + 1;
+      bookmark.dirty = true;
       await this.dao.update(bookmark);
       this.notify();
       return;
@@ -309,7 +346,9 @@ export class FlowRepository {
     if (metadata.coverUrl.length > 0) {
       bookmark.coverUrl = metadata.coverUrl;
     }
-    if (metadata.snapshotText.length > 0) {
+    if (!autoSnapshot) {
+      bookmark.snapshotStatus = SnapshotStatus.OFF;
+    } else if (metadata.snapshotText.length > 0) {
       const path = SnapshotStore.save(this.requireContext(), bookmark.id, metadata.snapshotText);
       bookmark.snapshotPath = path;
       bookmark.snapshotStatus = SnapshotStatus.DONE;
@@ -319,6 +358,7 @@ export class FlowRepository {
     }
     bookmark.updatedAt = Date.now();
     bookmark.rev = bookmark.rev + 1;
+    bookmark.dirty = true;
     bookmark.rebuildSearch();
     await this.dao.update(bookmark);
     this.notify();
@@ -366,9 +406,17 @@ export class FlowRepository {
     bookmark.tags = tags;
     bookmark.updatedAt = Date.now();
     bookmark.rev = bookmark.rev + 1;
+    bookmark.dirty = true;
     bookmark.rebuildSearch();
     await this.dao.update(bookmark);
     this.notify();
+  }
+
+  async saveEdits(id: string, title: string, note: string, excerpt: string, tags: string[]): Promise<void> {
+    const updated = await this.dao.editContent(id, title, note, excerpt, tags);
+    if (updated !== undefined) {
+      this.notify();
+    }
   }
 
   async delete(id: string): Promise<void> {
@@ -386,16 +434,29 @@ export class FlowRepository {
     if (bookmark !== undefined) {
       SnapshotStore.remove(bookmark.snapshotPath);
     }
+    if (this.context !== undefined) {
+      SnapshotStore.removeById(this.context, id);
+    }
     await this.dao.purge(id);
     this.notify();
   }
 
   async purgeExpired(): Promise<number> {
-    const count = await this.dao.purgeExpired(30);
-    if (count > 0) {
+    const ids = await this.dao.listExpiredIds(30);
+    for (let i = 0; i < ids.length; i++) {
+      const bookmark = await this.dao.findById(ids[i]);
+      if (bookmark !== undefined) {
+        SnapshotStore.remove(bookmark.snapshotPath);
+      }
+      if (this.context !== undefined) {
+        SnapshotStore.removeById(this.context, ids[i]);
+      }
+      await this.dao.purge(ids[i]);
+    }
+    if (ids.length > 0) {
       this.notify();
     }
-    return count;
+    return ids.length;
   }
 
   async purgeFromRemote(id: string): Promise<void> {
@@ -403,6 +464,9 @@ export class FlowRepository {
     if (bookmark !== undefined) {
       SnapshotStore.remove(bookmark.snapshotPath);
       await this.dao.purgeLocal(id);
+    }
+    if (this.context !== undefined) {
+      SnapshotStore.removeById(this.context, id);
     }
     await this.dao.removeTombstone(id);
   }
@@ -423,9 +487,10 @@ export class FlowRepository {
     return this.dao.listTags();
   }
 
-  async renameTag(id: string, name: string): Promise<void> {
-    await this.dao.renameTag(id, name);
+  async renameTag(id: string, name: string): Promise<boolean> {
+    const merged = await this.dao.renameTag(id, name);
     this.notify();
+    return merged;
   }
 
   async deleteTag(id: string): Promise<void> {
@@ -441,17 +506,116 @@ export class FlowRepository {
     this.notify();
   }
 
-  async importHtml(
-    html: string,
-    keepFolders: boolean,
-    onProgress: (done: number, total: number) => void
-  ): Promise<ImportResult> {
-    const items = BookmarkHtmlParser.parse(html);
+  async countConflicts(): Promise<number> {
+    return this.dao.countConflicts();
+  }
+
+  async listConflicts(): Promise<ConflictRecord[]> {
+    return this.dao.listConflicts();
+  }
+
+  async resolveConflict(conflictId: string, useLocal: boolean): Promise<boolean> {
+    const conflicts = await this.dao.listConflicts();
+    let target: ConflictRecord | undefined = undefined;
+    for (let i = 0; i < conflicts.length; i++) {
+      if (conflicts[i].id === conflictId) {
+        target = conflicts[i];
+        break;
+      }
+    }
+    if (target === undefined) {
+      return false;
+    }
+    const record = SyncRecord.parse(useLocal ? target.localJson : target.remoteJson);
+    const chosen = record.toBookmark();
+    if (chosen.urlKey.length === 0) {
+      return false;
+    }
+    const existing = await this.dao.findById(target.bookmarkId);
+    if (existing === undefined) {
+      const tombstone = await this.dao.findTombstone(target.bookmarkId);
+      if (tombstone !== undefined) {
+        return false;
+      }
+      chosen.rev = chosen.rev + 1;
+      chosen.updatedAt = Date.now();
+      chosen.dirty = true;
+      await this.dao.insert(chosen);
+    } else {
+      this.carryLocalFields(chosen, existing);
+      chosen.remoteEtag = existing.remoteEtag;
+      chosen.rev = existing.rev + 1;
+      chosen.updatedAt = Date.now();
+      chosen.dirty = true;
+      await this.dao.update(chosen);
+    }
+    await this.dao.deleteConflict(conflictId);
+    this.notify();
+    return true;
+  }
+
+  async previewHtml(html: string): Promise<ImportPreview> {
+    const parsed = BookmarkHtmlParser.parseAll(html);
+    const preview = new ImportPreview();
+    preview.total = parsed.items.length;
+    preview.folderCount = BookmarkHtmlParser.countFolders(parsed.items);
+    preview.invalidCount = parsed.invalidCount;
+    preview.duplicateCount = parsed.inFileDuplicates;
+    const existingKeys = await this.dao.listUrlKeys();
+    for (let i = 0; i < parsed.items.length; i++) {
+      const normalized = normalizeUrl(parsed.items[i].url);
+      if (normalized.length === 0) {
+        preview.invalidCount = preview.invalidCount + 1;
+        continue;
+      }
+      if (existingKeys.has(normalized)) {
+        preview.duplicateCount = preview.duplicateCount + 1;
+        continue;
+      }
+      preview.importable = preview.importable + 1;
+    }
+    return preview;
+  }
+
+  async importHtml(html: string, options: ImportOptions): Promise<ImportResult> {
+    const parsed = BookmarkHtmlParser.parseAll(html);
+    const items = parsed.items;
     const result = new ImportResult();
     result.total = items.length;
     result.folderCount = BookmarkHtmlParser.countFolders(items);
+    result.failed = parsed.invalidCount;
+    for (let i = 0; i < parsed.invalidUrls.length; i++) {
+      result.failedUrls.push(parsed.invalidUrls[i]);
+    }
+    const existingKeys = await this.dao.listUrlKeys();
+
+    let pending: Bookmark[] = [];
+    const flush = async (): Promise<void> => {
+      if (pending.length === 0) {
+        return;
+      }
+      try {
+        await this.dao.insertBatch(pending);
+        result.imported = result.imported + pending.length;
+      } catch (error) {
+        for (let i = 0; i < pending.length; i++) {
+          try {
+            await this.dao.insert(pending[i]);
+            result.imported = result.imported + 1;
+          } catch (inner) {
+            result.failed = result.failed + 1;
+            result.failedUrls.push(pending[i].url);
+          }
+        }
+      }
+      pending = [];
+    };
 
     for (let i = 0; i < items.length; i++) {
+      if (options.shouldCancel()) {
+        result.cancelled = true;
+        break;
+      }
       const item = items[i];
       const normalized = normalizeUrl(item.url);
       if (normalized.length === 0) {
@@ -459,30 +623,28 @@ export class FlowRepository {
         result.failedUrls.push(item.url);
         continue;
       }
-      const existing = await this.dao.findByUrlKey(normalized);
-      if (existing !== undefined) {
+      if (existingKeys.has(normalized)) {
         result.skipped = result.skipped + 1;
         continue;
       }
-      try {
-        const bookmark = Bookmark.create(item.url, item.title, BookmarkSource.IMPORT);
-        bookmark.folderPath = item.folderPath;
-        bookmark.siteName = domainOf(item.url);
-        if (keepFolders && item.folderPath.length > 0) {
-          bookmark.tags = [item.folderPath];
-        }
-        bookmark.rebuildSearch();
-        await this.dao.insert(bookmark);
-        result.imported = result.imported + 1;
-      } catch (error) {
-        result.failed = result.failed + 1;
-        result.failedUrls.push(item.url);
+      existingKeys.add(normalized);
+      const bookmark = Bookmark.create(item.url, item.title, BookmarkSource.IMPORT);
+      bookmark.folderPath = item.folderPath;
+      bookmark.siteName = domainOf(item.url);
+      if (options.keepFolders && item.folderPath.length > 0) {
+        bookmark.tags = [item.folderPath];
+      }
+      bookmark.rebuildSearch();
+      pending.push(bookmark);
+      if (pending.length >= 250) {
+        await flush();
       }
       if (i % 10 === 0) {
-        onProgress(i + 1, items.length);
+        options.onProgress(i + 1, items.length);
       }
     }
-    onProgress(items.length, items.length);
+    await flush();
+    options.onProgress(items.length, items.length);
     this.notify();
     return result;
   }
@@ -543,6 +705,13 @@ export class FlowRepository {
   }
 
   async clearAll(): Promise<void> {
+    const all = await this.dao.listAll(true);
+    for (let i = 0; i < all.length; i++) {
+      SnapshotStore.remove(all[i].snapshotPath);
+    }
+    if (this.context !== undefined) {
+      SnapshotStore.clearAll(this.context);
+    }
     await this.dao.clearAll();
     this.notify();
   }

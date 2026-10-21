@@ -140,7 +140,7 @@ export class MetadataService {
     }
   }
 
-  static async fetch(targetUrl: string): Promise<MetadataResult> {
+  static async fetch(targetUrl: string, includeSnapshot: boolean = true): Promise<MetadataResult> {
     const result = new MetadataResult();
     const request = http.createHttp();
     try {
@@ -188,9 +188,11 @@ export class MetadataService {
         result.faviconUrl = MetadataService.resolve(targetUrl, '/favicon.ico');
       }
       const bodyText = MetadataService.stripTags(html);
-      result.snapshotText = bodyText.length > Limits.snapshotBytes
-        ? bodyText.substring(0, Limits.snapshotBytes)
-        : bodyText;
+      result.snapshotText = includeSnapshot && bodyText.length > 0
+        ? (bodyText.length > Limits.snapshotBytes
+          ? bodyText.substring(0, Limits.snapshotBytes)
+          : bodyText)
+        : '';
       if (result.description.length === 0 && bodyText.length > 0) {
         result.description = bodyText.substring(0, 160);
       }
