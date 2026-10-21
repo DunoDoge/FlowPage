@@ -52,6 +52,16 @@ export class WebDavTransport {
     return url;
   }
 
+  private headerValue(headers: Record<string, string>, name: string): string {
+    const keys = Object.keys(headers);
+    for (let i = 0; i < keys.length; i++) {
+      if (keys[i].toLowerCase() === name) {
+        return headers[keys[i]];
+      }
+    }
+    return '';
+  }
+
   private async request(
     method: string,
     path: string,
@@ -89,9 +99,7 @@ export class WebDavTransport {
       const payload = response.result;
       result.body = typeof payload === 'string' ? payload : '';
       const responseHeaders = response.header as Record<string, string>;
-      const etag = responseHeaders['etag'];
-      const etagUpper = responseHeaders['ETag'];
-      result.etag = etag !== undefined ? etag : (etagUpper !== undefined ? etagUpper : '');
+      result.etag = this.headerValue(responseHeaders, 'etag');
       return result;
     } catch (error) {
       const businessError = error as BusinessError;
@@ -219,6 +227,26 @@ export class WebDavTransport {
     return this.request('GET', `FlowPage/v1/items/${encodeURIComponent(name)}.json`, '', {});
   }
 
+  private async stat(name: string): Promise<string> {
+    const response = await this.request(
+      'PROPFIND',
+      `FlowPage/v1/items/${encodeURIComponent(name)}.json`,
+      PROPFIND_BODY,
+      {
+        'Depth': '0',
+        'Content-Type': 'application/xml; charset=utf-8'
+      }
+    );
+    if (response.status !== 207 && response.status !== 200) {
+      return '';
+    }
+    const match = new RegExp('<[^>]*getetag[^>]*>([^<]*)<', 'i').exec(response.body);
+    if (match === null) {
+      return '';
+    }
+    return this.decodeHref(match[1].trim());
+  }
+
   async put(name: string, json: string, etag: string): Promise<string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json; charset=utf-8'
@@ -243,7 +271,21 @@ export class WebDavTransport {
       );
       throw new Error(`PUT_${response.status}`);
     }
-    return response.etag;
+    let syncedEtag = response.etag;
+    if (syncedEtag.length === 0) {
+      try {
+        syncedEtag = await this.stat(name);
+      } catch (error) {
+        syncedEtag = '';
+      }
+      hilog.info(
+        0x0000,
+        'flowpage',
+        'webdav PUT etag fallback %{public}s',
+        syncedEtag.length > 0 ? 'ok' : 'missing'
+      );
+    }
+    return syncedEtag;
   }
 
   async remove(name: string): Promise<void> {
