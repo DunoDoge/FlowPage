@@ -293,5 +293,126 @@ export default function syncEngineTest() {
       expect(transport.files.size).assertEqual(1);
       expect((await dao.findById(bookmark.id)) === undefined).assertFalse();
     });
+
+    it('tagMergeDoesNotOverwriteRemoteEditOfTargetOnlyBookmark', 0, async () => {
+      if (context === undefined) {
+        expect(context === undefined).assertFalse();
+        return;
+      }
+      const dao = new BookmarkDao();
+      const targetOnly = Bookmark.create('https://example.com/merge-sync-target', '本地旧标题', BookmarkSource.MANUAL);
+      targetOnly.updatedAt = Date.now() - 10000;
+      targetOnly.tags = ['目标组'];
+      targetOnly.rebuildSearch();
+      await dao.insert(targetOnly);
+      await dao.setRemoteEtagIfUnchanged(targetOnly.id, '"r1"', targetOnly.rev, targetOnly.updatedAt);
+      const sourceOnly = Bookmark.create('https://example.com/merge-sync-source', '源标签笺', BookmarkSource.MANUAL);
+      sourceOnly.tags = ['源组'];
+      sourceOnly.rebuildSearch();
+      await dao.insert(sourceOnly);
+
+      const transport = new FakeTransport();
+      const remote = new SyncRecord();
+      remote.id = targetOnly.id;
+      remote.url = targetOnly.url;
+      remote.title = '远端新修改';
+      remote.createdAt = targetOnly.createdAt;
+      remote.updatedAt = Date.now() - 5000;
+      remote.rev = 2;
+      transport.seed(targetOnly.id, remote.toJson(), '"r2"');
+
+      const tags = await dao.listTags();
+      let sourceId = '';
+      let targetId = '';
+      for (let i = 0; i < tags.length; i++) {
+        if (tags[i].name === '源组') {
+          sourceId = tags[i].id;
+        }
+        if (tags[i].name === '目标组') {
+          targetId = tags[i].id;
+        }
+      }
+      await dao.mergeTags(sourceId, targetId);
+      const afterMerge = await dao.findById(targetOnly.id);
+      expect(afterMerge === undefined).assertFalse();
+      if (afterMerge !== undefined) {
+        expect(afterMerge.dirty).assertFalse();
+      }
+
+      const report = await SyncEngine.run(transport, context);
+      expect(report.downloaded).assertEqual(1);
+      const after = await dao.findById(targetOnly.id);
+      expect(after === undefined).assertFalse();
+      if (after !== undefined) {
+        expect(after.title).assertEqual('远端新修改');
+        expect(after.dirty).assertFalse();
+      }
+    });
+
+    it('downloadKeepsLocalFolderPathAndSource', 0, async () => {
+      if (context === undefined) {
+        expect(context === undefined).assertFalse();
+        return;
+      }
+      const dao = new BookmarkDao();
+      const local = Bookmark.create('https://example.com/keep-folder', '本地标题', BookmarkSource.IMPORT);
+      local.folderPath = '工作/工具';
+      local.updatedAt = Date.now() - 10000;
+      await dao.insert(local);
+      await dao.setRemoteEtagIfUnchanged(local.id, '"r1"', local.rev, local.updatedAt);
+
+      const transport = new FakeTransport();
+      const remote = new SyncRecord();
+      remote.id = local.id;
+      remote.url = local.url;
+      remote.title = '远端标题';
+      remote.createdAt = local.createdAt;
+      remote.updatedAt = Date.now() - 5000;
+      remote.rev = 2;
+      transport.seed(local.id, remote.toJson(), '"r2"');
+
+      const report = await SyncEngine.run(transport, context);
+      expect(report.downloaded).assertEqual(1);
+      const after = await dao.findById(local.id);
+      expect(after === undefined).assertFalse();
+      if (after !== undefined) {
+        expect(after.title).assertEqual('远端标题');
+        expect(after.folderPath).assertEqual('工作/工具');
+        expect(after.source).assertEqual(BookmarkSource.IMPORT);
+      }
+    });
+
+    it('restoredLocalConflictUploadsOnNextSync', 0, async () => {
+      if (context === undefined) {
+        expect(context === undefined).assertFalse();
+        return;
+      }
+      const dao = new BookmarkDao();
+      const bookmark = Bookmark.create('https://example.com/restore-upload', '原版', BookmarkSource.MANUAL);
+      await dao.insert(bookmark);
+      await dao.setRemoteEtagIfUnchanged(bookmark.id, '"r1"', bookmark.rev, bookmark.updatedAt);
+      const local = SyncRecord.fromBookmark(bookmark);
+      local.title = '本地恢复版本';
+      const remote = SyncRecord.fromBookmark(bookmark);
+      remote.title = '远端旧版本';
+      remote.updatedAt = Date.now() - 5000;
+      remote.rev = 2;
+      await dao.insertConflict(bookmark.id, local.toJson(), remote.toJson(), 'lww-remote-wins');
+      const records = await FlowRepository.get().listConflicts();
+      expect(records.length).assertEqual(1);
+      const restored = await FlowRepository.get().resolveConflict(records[0].id, true);
+      expect(restored).assertTrue();
+
+      const transport = new FakeTransport();
+      transport.seed(bookmark.id, remote.toJson(), '"r2"');
+      const report = await SyncEngine.run(transport, context);
+      expect(report.uploaded).assertEqual(1);
+      expect(report.downloaded).assertEqual(0);
+      const stored = transport.files.get(bookmark.id);
+      expect(stored === undefined).assertFalse();
+      if (stored !== undefined) {
+        expect(stored.json.indexOf('本地恢复版本') >= 0).assertTrue();
+      }
+    });
   });
 }
