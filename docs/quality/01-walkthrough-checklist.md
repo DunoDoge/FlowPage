@@ -96,7 +96,7 @@
 
 ---
 
-## 5. 本轮验收记录（2026-10-21，docs/08 第一至第四批）
+## 5. 本轮验收记录（2026-10-21，records/02-code-review.md 与 records/03-review-follow-up.md 第一至第四批）
 
 ### 5.1 自动化
 
@@ -106,7 +106,7 @@
 - 收尾批次（同日）：新增 SyncRecord schema 2、旧库迁移、卡片 preferences 往返用例，模拟器 **81/81 通过**；手机因锁屏未复跑收尾批次（主功能 77/77 已解锁复跑）。
 - 基准（模拟器，clean 构建后最终版）：冷查询 15ms、1000 条 1ms、10000 条 12ms、5000 条导入 4551ms（12s 保险阈值内）。
 - 提交前复核（审查清理后重跑，clean 构建终跑）：手机冷查询 15ms、热查询 3ms/15ms、5000 条导入 6444ms；模拟器 12ms、3ms/14ms、5775ms；两端均 77/77。数字随设备负载浮动，阈值以 `QueryTest`/`ImportTest` 断言为准。
-- 覆盖命令见 [wiki/05-build-and-run.md](./wiki/05-build-and-run.md#5-设备端测试)。
+- 覆盖命令见 [wiki/05-build-and-run.md](../wiki/05-build-and-run.md#5-设备端测试)。
 
 ### 5.2 已自动化验证的行为
 

@@ -35,8 +35,8 @@ setTags/fillTags` 已处理；标签改名/合并/删除也在同一事务内按
 | `sync_state` | `key` PK、`value` | 预留；当前同步游标用 preferences（`last_sync`），表未使用 |
 | `tombstone` | `id` PK、`remote_id`、`deleted_at`、`attempts`、`last_error` | 彻底删除后待传播的墓碑 |
 
-六个索引：`idx_bookmark_url_key`（唯一）、按 `deleted/archived/created_at`、`deleted/starred/created_at`、
-`deleted/read_state/created_at` 的三个列表索引、`idx_tag_name_key`（唯一）、`idx_bookmark_tag_tag`。
+七个索引：`idx_bookmark_url_key`（唯一）、按 `deleted/archived/created_at`、`deleted/starred/created_at`、
+`deleted/read_state/created_at` 的三个列表索引、`idx_bookmark_domain`、`idx_tag_name_key`（唯一）、`idx_bookmark_tag_tag`。
 
 ## 3. DAO 行为
 
@@ -62,7 +62,8 @@ setTags/fillTags` 已处理；标签改名/合并/删除也在同一事务内按
 ## 4. 初始化与迁移
 
 `Database.init()` 是进程内单例：第一次调用 `getRdbStore`，依次 `CREATE TABLE IF NOT EXISTS` 六表，
-再对三个后加列执行 `ALTER TABLE ... ADD COLUMN`，异常直接忽略（表示列已存在），最后建索引。
+再对四个后加列（`dirty` / `link_status` / `link_checked_at` / `domain`）执行 `ALTER TABLE ... ADD COLUMN`，
+异常直接忽略（表示列已存在），最后建索引。
 因此新增列时必须同时：
 
 1. 改 `Database.SQL_BOOKMARK`（新库直接带上该列）；

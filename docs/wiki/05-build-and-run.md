@@ -74,7 +74,7 @@ hdc shell aa start -a EntryAbility -b com.dunodoge.flowpage
 
 ## 5. 设备端测试
 
-测试位于 `entry/src/ohosTest`，10 个套件、81 个 Hypium 用例（2026-10-21 第三/四批 + 收尾批次）：
+测试位于 `entry/src/ohosTest`，10 个套件、81 个 Hypium 用例（2026-10-21 第三/四批 + 收尾批次；模拟器 81/81，手机主功能 77/77，81 版因锁屏未复跑）：
 
 | 套件 | 覆盖 |
 |---|---|

@@ -1,9 +1,12 @@
 # 流笺 FlowPage · 真机走查问题与修复任务
 
-- 记录日期：2026-10-20
+> **时效说明**：本文是 2026-10-20/21 的走查与修复快照，设备地址、用例数与待办不代表当前状态。
+> 当前回归项与测试结果见 [quality/01-walkthrough-checklist.md](./01-walkthrough-checklist.md) §5。
+
+- 记录日期：2026-10-20 ~ 2026-10-21
 - 来源：用户在 HUAWEI Pura 70 + MateBook Pro 上手动走查
 - 性质：**已修复并回归**，详见文末「附二 · 本轮修复记录与验证」
-- 关联文档：`05-实现记录.md`、`06-走查清单.md`
+- 关联文档：`records/01-implementation-log.md`、`quality/01-walkthrough-checklist.md`
 
 ---
 
@@ -293,8 +296,8 @@ curl -u 邮箱:应用密码 -X PROPFIND -H "Depth: 0" \
 
 1. 先读本文件，按 N1+N5+N6 → N4 → N2 → N3 修复。
 2. N4 需要真实坚果云应用密码；不要在代码或文档中记录密码。
-3. 修复后用 `docs/06-走查清单.md` 做回归。
-4. 构建使用 SDK Hvigor 7.26.8（见 `05-实现记录.md` 的构建说明）。
+3. 修复后用 `docs/quality/01-walkthrough-checklist.md` 做回归。
+4. 构建使用 SDK Hvigor 7.26.8（见 `records/01-implementation-log.md` 的构建说明）。
 5. 本地测试 WebDAV 服务已停止；真实坚果云上传/下载与双端同步已验证。
 
 ---
@@ -422,7 +425,7 @@ curl -u 邮箱:应用密码 -X PROPFIND -H "Depth: 0" \
 
 - 构建：SDK Hvigor 7.26.8，`assembleHap` **BUILD SUCCESSFUL**。
 - 部署：HUAWEI Pura 70（`10.201.96.47:36793`）、MateBook Pro 2in1（`127.0.0.1:37565`）均安装并启动成功。
-- 回归覆盖：`docs/06-走查清单.md` 中首页、详情、星标、返回、三栏、卡片 Want、同步错误提示等条目；双机手势接续已实测可用。
+- 回归覆盖：`docs/quality/01-walkthrough-checklist.md` 中首页、详情、星标、返回、三栏、卡片 Want、同步错误提示等条目；双机手势接续已实测可用。
 
 ---
 
@@ -459,7 +462,7 @@ curl -u 邮箱:应用密码 -X PROPFIND -H "Depth: 0" \
 
 - `components/StreamHome.ets`：首页大标题改为「流笺」。
 - `components/NavigationRail.ets`：2in1 侧栏导航项改为「流笺」。
-- `docs/01`–`docs/07` 中作为页面标题/导航名的「笺流」统一改为「流笺」；Launcher、分享面板、导出标题保持「流笺」。
+- `docs/product/`、`docs/design/`、`docs/engineering/`、`docs/quality/` 中作为页面标题/导航名的「笺流」统一改为「流笺」；Launcher、分享面板、导出标题保持「流笺」。
 
 **验证**
 
@@ -483,7 +486,7 @@ curl -u 邮箱:应用密码 -X PROPFIND -H "Depth: 0" \
 
 ### 回归补充
 
-- `docs/06-走查清单.md` 增加回收站恢复/彻底删除与空态回归项。
+- `docs/quality/01-walkthrough-checklist.md` 增加回收站恢复/彻底删除与空态回归项。
 
 ---
 
@@ -541,7 +544,7 @@ curl -u 邮箱:应用密码 -X PROPFIND -H "Depth: 0" \
 
 - 来源：本轮同步可靠性任务（P0-1 / P0-2 / P1-1 / P1-2 / P1-3）
 - 构建：SDK Hvigor 7.26.8 `assembleHap` **BUILD SUCCESSFUL**
-- 自动化：Hypium 28 个用例在 HUAWEI Pura 70 `aa test` 全通过
+- 自动化：当时 Hypium 28 个用例在 HUAWEI Pura 70 `aa test` 全通过（当前 81 个，见 quality/01 §5）
 
 ### P0-1 彻底删除的跨端语义
 

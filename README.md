@@ -20,7 +20,7 @@ FlowPage 是一款本地优先的 HarmonyOS 链接收笺应用：数据先落在
 
 - HarmonyOS Stage 模型，ArkTS + ArkUI，状态管理 V2
 - 单模块 `entry`（HAP），API 26，设备类型 `phone` / `tablet` / `2in1`
-- 关系型数据库 RDB（`flowpage.db`，6 表 + 6 索引），preferences，应用沙箱文件快照
+- 关系型数据库 RDB（`flowpage.db`，6 表 + 7 索引），preferences，应用沙箱文件快照
 - 无第三方运行时依赖
 
 ## 目录结构
@@ -30,7 +30,7 @@ FlowPage/
 ├── AppScope/                     # bundleName / 版本 / 应用图标
 ├── build-profile.template.json5  # 根构建配置模板（本地 build-profile.json5 含签名，已被 gitignore）
 ├── code-linter.json5             # CodeLinter 规则
-├── docs/                         # 产品、技术、UI、验收文档 + wiki/ 分层 Code Wiki
+├── docs/                         # 产品、设计、工程、质量、记录文档 + wiki/ 分层 Code Wiki
 ├── entry/
 │   └── src/
 │       ├── main/
@@ -87,10 +87,10 @@ hdc shell aa test -b com.dunodoge.flowpage -m entry_test -s unittest OpenHarmony
 
 ## 已知边界
 
-- 2026-10-21 复审结论与下一步清单见 [docs/08-代码复审与下一步计划.md](docs/08-代码复审与下一步计划.md)；当前为内部 Alpha，不建议直接按 1.0 发布。
+- 2026-10-21 复审结论与下一步清单见 [docs/records/02-code-review.md](docs/records/02-code-review.md)；当前为内部 Alpha，不建议直接按 1.0 发布。
 - 鸿蒙沙箱无法直接读取其他浏览器的书签库；迁移通过 HTML 导入、分享收笺与粘贴完成。
-- 分布式 KV 同局域网同步、App Linking HTTPS、碰一碰、冲突记录 UI 尚未实现。
-- 同步采用 LWW，极端并发修改时冲突记录会写入 `conflict` 表，但当前没有查看/合并入口。
+- 分布式 KV 同局域网同步、App Linking HTTPS、碰一碰、内置浏览器/阅读模式尚未实现；冲突记录 UI 已实现。
+- 同步采用 LWW，极端并发修改时冲突记录会写入 `conflict` 表，同步页可查看并恢复本地/采用远端；尚未做字段级合并。
 - 正文快照是纯文本，不保留图片与复杂排版；网页抓取受登录、反爬与网络限制。
 
 ## 文档

@@ -1,10 +1,14 @@
 # 流笺 FlowPage · 代码复审与下一步计划
 
+> **时效说明**：本文是 2026-10-21 第一轮复审快照，文中 30/63 用例与「未实现」清单均为当时状态。
+> 第一至第四批已收口，收尾批次后为 10 套件 / 81 用例；当前状态见 [docs/README](../README.md) 与
+> [records/03-review-follow-up.md](./03-review-follow-up.md)。
+
 - 复审日期：2026-10-21
 - 复审范围：`entry/src/main/ets` 全量源码、`entry/src/ohosTest`、构建配置、`docs/`
 - 代码基线：`a2eb04c`（工作区另含未提交的 `AGENTS.md`、`README.md`、`docs/wiki/`）
 - 复审结论：**内部 Alpha 可用，不建议直接按 1.0 发布**
-- 关联文档：[AGENTS.md](../AGENTS.md)、[wiki/README.md](./wiki/README.md)、[05-实现记录.md](./05-实现记录.md)、[07-走查问题与修复任务.md](./07-走查问题与修复任务.md)
+- 关联文档：[AGENTS.md](../../AGENTS.md)、[wiki/README.md](../wiki/README.md)、[records/01-implementation-log.md](./01-implementation-log.md)、[quality/02-walkthrough-issues.md](../quality/02-walkthrough-issues.md)
 
 ---
 
@@ -36,7 +40,7 @@
 | `hvigorw clean` + `hvigorw assembleHap` | BUILD SUCCESSFUL（约 14.7s） |
 | 构建告警 | 2 条 ArkTS WARN：卡片页 `@Entry` 无参数 |
 | 静态检查 | `DEVECO_HOME` 未设置，`check_ets_files` 不可用；本轮以 hvigor 全量编译为准 |
-| Hypium | 源码实际 **30 个用例**；`docs/05` 仍写 28 个，本轮未重跑设备测试 |
+| Hypium | 源码实际 **30 个用例**；`docs/records/01-implementation-log.md` 仍写 28 个，本轮未重跑设备测试 |
 | 设备 | 复审时在线 2 台（手机 + 2in1），可做真机回归 |
 | 代码规模 | 复审时 `entry/src/main/ets` 42 个 `.ets`，约 6.4k 行；`ohosTest` 5 个 `.ets` |
 | 本轮构建（第一/第二批） | `hvigorw clean assembleHap` BUILD SUCCESSFUL；2 条桌面卡片 `@Entry` 无参数 WARN |
@@ -52,7 +56,7 @@
 
 | 模块 | 状态 | 主要缺口 |
 |---|---|---|
-| 首页流、搜索、筛选 | 完成 | 排序、搜索高亮、SQL 分页已落地；10k 热查询 17ms（Pura 70），见 docs/09 §3 |
+| 首页流、搜索、筛选 | 完成 | 排序、搜索高亮、SQL 分页已落地；10k 热查询 17ms（Pura 70），见 docs/records/03-review-follow-up.md §3 |
 | 手动/粘贴/分享收笺 | 基本完成 | 详情「分享」已改为原文 URL，深链改为复制动作；保存前仍无标题/站点预览 |
 | HTML 导入 | 完成 | 预览/取消/失败清单/分批事务已落地；5000 条 6.6s（Pura 70），阈值放宽为 12s 保险线 |
 | 详情阅读与编辑 | 完成 | 复制深链、标记未读、UNREAD→READING→READ + 30s 已读均已落地；正文按内容 key 分段渲染 |
@@ -112,7 +116,7 @@
 | R16 | 标签计数含回收站 | `BookmarkDao.ets:451-455` 未过滤 `bookmark.deleted = 0` | 标签数字与筛选结果不一致 |
 | R17 | 汇总口径不一致 | `FlowRepository.ets:217-237` 的 unread/starred 包含归档，首页筛选排除归档 | 设置/同步页数字与列表不一致 |
 | R18 | 站点图标未展示 | `MetadataService.ets:184-189` 抓取 favicon/cover，UI 无 `Image` 消费 | PRD「自动站点图标」未落地 |
-| R19 | 死代码与文档漂移 | `sync_state`、`deviceId`、`searchLimit`、`countConflicts`、`SnapshotStatus.OFF` 未使用；`docs/05` 写 28 个用例（实际 30）、仍提 `BrowserPage`；`docs/04` 仍把 `devecocli build` 当门禁 | 后续维护者被误导 |
+| R19 | 死代码与文档漂移 | `sync_state`、`deviceId`、`searchLimit`、`countConflicts`、`SnapshotStatus.OFF` 未使用；`docs/records/01-implementation-log.md` 写 28 个用例（实际 30）、仍提 `BrowserPage`；`docs/engineering/02-implementation-plan.md` 仍把 `devecocli build` 当门禁 | 后续维护者被误导 |
 | R20 | `as` 断言与项目规范冲突 | 14 处 `as`，多为 `getContext`/`JSON.parse` 平台断言 | 与 `AGENTS.md`「禁止 as」不一致，需修代码或改规范 |
 
 ---
@@ -155,13 +159,13 @@
   - 验收：断网/数据库异常后按钮不卡死；一次编辑只产生一次 `rev` 增长与一次列表刷新。
   - 测试：Repository 单次更新用例；异常路径至少覆盖 busy 复位。
 
-**第一批完成门槛**：`hvigorw clean assembleHap` 成功；新增测试通过；`docs/08` 勾选完成；`docs/06` 相关走查项无回归。
+**第一批完成门槛**：`hvigorw clean assembleHap` 成功；新增测试通过；`docs/records/02-code-review.md` 勾选完成；`docs/quality/01-walkthrough-checklist.md` 相关走查项无回归。
 
 ---
 
 ## 6. 第二批：验收补齐
 
-目标：把 PRD / 04 验收中“已承诺但不可验收”的条目补齐。**建议 3–5 天。**
+目标：把 PRD / `docs/engineering/02-implementation-plan.md` 验收中“已承诺但不可验收”的条目补齐。**建议 3–5 天。**
 
 > 2026-10-21 完成：T2.1–T2.6 全部落地；卡片与键盘仍需人工走查，见 §10。
 
@@ -181,7 +185,7 @@
 - [x] **T2.3 搜索、排序与列表性能**
   - 增加排序入口（创建时间 / 域名）；搜索命中高亮。
   - 列表查询改为 SQL 过滤/分页，避免每次全表加载；卡片快照按需刷新。
-  - 验收：1000 条滚动 60fps；10k 条搜索 ≤100ms（按 04 口径）。
+  - 验收：1000 条滚动 60fps；10k 条搜索 ≤100ms（按 `docs/engineering/02-implementation-plan.md` 口径）。
   - 测试：查询边界、分页、排序。
 
 - [x] **T2.4 阅读语义与快照体验**
@@ -195,13 +199,13 @@
   - 将 `ink_tertiary` 调整到 ≥4.5:1（至少正文辅助文字）；所有可点区域 ≥44vp。
   - 补充 `accessibilityText`、焦点顺序、键盘操作（列表上下选择、打开、返回）。
   - 修正标签计数、summary 口径；展示 favicon 或明确不做。
-  - 验收：按 `docs/06` 走查，深色/浅色无不可读文字；键盘可完成核心路径。
+  - 验收：按 `docs/quality/01-walkthrough-checklist.md` 走查，深色/浅色无不可读文字；键盘可完成核心路径。
 
 - [x] **T2.6 卡片与服务卡片验收**
   - 桌面添加 2×2 / 2×4、刷新、点击直达、空状态；补「换一笺」。
-  - 验收：人工走查通过，并记录在 `docs/06`。
+  - 验收：人工走查通过，并记录在 `docs/quality/01-walkthrough-checklist.md`。
 
-**第二批完成门槛**：上述验收项全部有记录；`hvigorw clean assembleHap` 成功；设备端 Hypium 全通过；`docs/06` 更新。
+**第二批完成门槛**：上述验收项全部有记录；`hvigorw clean assembleHap` 成功；设备端 Hypium 全通过；`docs/quality/01-walkthrough-checklist.md` 更新。
 
 ---
 
@@ -233,10 +237,10 @@
 
 1. `hvigorw clean assembleHap` 成功，无 ERROR；已知 WARN 需记录。
 2. `entry/src/ohosTest` 全部用例通过；新增能力必须有测试。
-3. 完成 `docs/06` 走查清单中手机、2in1、同步三部分。
+3. 完成 `docs/quality/01-walkthrough-checklist.md` 走查清单中手机、2in1、同步三部分。
 4. 每一笔 Repository 写操作都满足 `rev / updated_at / dirty` 语义。
 5. 不引入 `any` / `unknown`；`as` 使用需与 `AGENTS.md` 规则一致。
-6. 文档状态与代码一致：`docs/05` 用例数、`docs/04` 构建命令、`README` 已知边界。
+6. 文档状态与代码一致：`docs/records/01-implementation-log.md` 用例数、`docs/engineering/02-implementation-plan.md` 构建命令、`README` 已知边界。
 7. 未经明确要求不 commit / push。
 
 ---
@@ -246,10 +250,10 @@
 ```text
 你是 FlowPage（流笺）项目的实现代理。请先完整阅读：
 1. AGENTS.md
-2. docs/08-代码复审与下一步计划.md
+2. docs/records/02-code-review.md
 3. docs/wiki/01-architecture.md、03-data-layer.md、04-sync-and-services.md、05-build-and-run.md
 
-目标：完成 docs/08 中「第一批：正确性收口」和「第二批：验收补齐」的全部条目，并在完成后更新 docs/08 的勾选状态与验证记录。
+目标：完成 docs/records/02-code-review.md 中「第一批：正确性收口」和「第二批：验收补齐」的全部条目，并在完成后更新该文档的勾选状态与验证记录。
 
 项目事实：
 - HarmonyOS API 26 / ArkTS + ArkUI 状态管理 V2，单 HAP entry。
@@ -290,7 +294,7 @@ C. 详情「分享」默认分享原文 URL，深链作为附加动作。
 1. 修改文件清单与每个文件的意图。
 2. 新增/修改的测试清单及通过结果。
 3. 构建与设备测试命令、输出摘要。
-4. docs/08 勾选状态与遗留问题。
+4. docs/records/02-code-review.md 勾选状态与遗留问题。
 5. 未解决的决策项与风险。
 ```
 
@@ -322,7 +326,7 @@ C. 详情「分享」默认分享原文 URL，深链作为附加动作。
 | `entry/src/main/ets/widget/pages/TodayCard.ets` | 「换一笺」本地轮换（候选来自快照） |
 | `entry/src/main/resources/{base,dark}/element/color.json` | 辅助文字对比度 ≥4.5:1；新增 `highlight` |
 | `entry/src/ohosTest/ets/test/*` | 新增 `TagSync`、`Snapshot`、`Conflict`、`Repository`、`Query`、`Import` 六个套件，注册进 `List.test.ets` |
-| `docs/wiki/*`、`docs/06`、`docs/README.md`、`AGENTS.md` | 同步事实与验收记录 |
+| `docs/wiki/*`、`docs/quality/01-walkthrough-checklist.md`、`docs/README.md`、`AGENTS.md` | 同步事实与验收记录 |
 
 ### 10.2 测试与结果
 
@@ -360,6 +364,6 @@ hdc shell aa test -b com.dunodoge.flowpage -m entry_test -s unittest OpenHarmony
 3. `codelinter` 因本机缺 HNP Node 未运行；建议在 DevEco 环境补跑。
 4. 本轮设备测试只在手机完成；2in1 未跑测试 HAP。
 5. 冲突 UI 为最小可用版本，展示截断 JSON，未做字段级合并。
-6. R20（存量 `as` 断言）未纳入本轮；收尾批次已从 18 处收敛到 5 处平台类型边界，见 docs/09 §6.5。
+6. R20（存量 `as` 断言）未纳入本轮；收尾批次已从 18 处收敛到 5 处平台类型边界，见 docs/records/03-review-follow-up.md §6.5。
 7. R10（跨端 `folderPath/source`）：第三批完成最小修；收尾批次已升级 `SyncRecord` schema 2 并兼容 schema 1，Backlog 关闭。
 8. 5000 条导入在模拟器为 10.27s，12s 保险阈值内；低端真机仍需复测回填。

@@ -11,7 +11,7 @@
 | 平台 | HarmonyOS Stage 模型，API 26，phone / tablet / 2in1 |
 | 模块 | 仅 `entry`（HAP）；无 HAR、无多端模块、无第三方运行时依赖 |
 | 状态 | `@ObservedV2` + `@Trace` + `@ComponentV2` + `@Local` / `@Param` / `@Event` / `@Monitor` |
-| 数据 | RDB `flowpage.db`（6 表 + 6 索引）、preferences、`filesDir/snapshots/*.txt` |
+| 数据 | RDB `flowpage.db`（6 表 + 7 索引）、preferences、`filesDir/snapshots/*.txt` |
 | 同步 | WebDAV（Basic Auth），ETag 增量 + LWW；无分布式 KV、无账号体系 |
 | 测试 | `@ohos/hypium`，`entry/src/ohosTest` 10 个套件 / 81 个用例，仅设备端 |
 
@@ -93,13 +93,13 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
 - 日志 `hilog`，domain `0x0000`，TAG `'flowpage'`。
 - 注释只写代码表达不出的约束，英文，与该文件现有风格一致。
 - 提交遵循现有 Conventional Commits（`fix(sync): ...`、`docs: ...`）；**未经明确要求不要 commit/push**。
-- 现有文档 `docs/05-实现记录.md` 含历史批次记录，可能落后于代码（例如“28 个用例”、已删除的
+- 现有文档 `docs/records/01-implementation-log.md` 含历史批次记录，可能落后于代码（例如“28 个用例”、已删除的
   `BrowserPage`/Permissions）。以源码和本文件为准。
 
 ## 文档地图
 
 - `docs/wiki/`：分层 Code Wiki（架构 / UI / 数据 / 同步与服务 / 构建运行）。
-- `docs/01-PRD.md` … `docs/07-走查问题与修复任务.md`：产品、技术方案、UI 规范、验收与走查记录。
-- `docs/08-代码复审与下一步计划.md`、`docs/09-复审复核与第三批修复计划.md`：两轮复审结论与修复批次；
-  文档里的勾选只是声明，落地与否必须回代码与测试验证。
+- `docs/product/`、`docs/design/`、`docs/engineering/`：产品需求、UI 规范、技术方案与实施计划。
+- `docs/quality/`：走查清单与走查问题修复记录。
+- `docs/records/`：实现记录与两轮复审结论及修复批次；文档里的勾选只是声明，落地与否必须回代码与测试验证。
 - `docs/README.md`：设计文档索引；根 `README.md` 面向使用者。

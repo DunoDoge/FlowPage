@@ -1,8 +1,11 @@
 # 流笺 FlowPage · 第二轮复审复核与第三批修复计划
 
+> **时效说明**：本文是 2026-10-21 第二轮复审与第三/四批修复的历史记录；收尾批次后为 10 套件 / 81 用例。
+> 当前状态见 [docs/README](../README.md) 与 [quality/01-walkthrough-checklist.md](../quality/01-walkthrough-checklist.md) §5。
+
 - 复核日期：2026-10-21
 - 复核方法：主审（第二轮复审）出结论后，派 3 个只读子代理分别独立验证「数据/同步一致性」「UI/ArkUI 行为」「测试与文档」，优先尝试推翻
-- 代码基线：HEAD `21d7bfb` + 工作区未提交改动（含 docs/08 第一/二批修复）
+- 代码基线：HEAD `21d7bfb` + 工作区未提交改动（含 docs/records/02-code-review.md 第一/二批修复）
 - 复核结果：**全部结论无一被推翻**；2 处表述修正、3 处加重因素、1 处补充发现
 - 构建与设备证据：`hvigorw clean assembleHap` BUILD SUCCESSFUL（12.7s，2 条已知卡片 `@Entry` WARN）；
   设备 127.0.0.1:37565 实测 `Tests run: 67`（首跑 1 fail——5000 条导入 8s 预算临界，复跑 67/67 pass）；
@@ -22,7 +25,7 @@
 | N5 LIKE 未转义（P2） | CONFIRMED | `_`/`%` 当通配符，"a_b" 命中 "axb" |
 | N6 导入基准临界（P2） | CONFIRMED | 实测 6454–6973ms 为预算 81%–87%，首跑偶发失败已被本轮设备运行复现 |
 | N7 卡片 '\|' 分隔符冲突（P2） | CONFIRMED | **补充**：标题含换行是另一种失败模式——行被 split('\n') 切开后 id 仍正确、仅标题错；含 '\|' 才是错 id → 卡片跳转空白页。'\' 入口齐全（og:title、手动编辑、导入 cleanText 均不去 '\|'） |
-| N8 fillTags 全表 join + 每刷新 7 查询（P2） | CONFIRMED | Query 基准断言 1000<300ms / 10k<800ms，是 docs/04:121 验收口径（10k ≤100ms）的 3–8 倍宽松 |
+| N8 fillTags 全表 join + 每刷新 7 查询（P2） | CONFIRMED | Query 基准断言 1000<300ms / 10k<800ms，是 docs/engineering/02-implementation-plan.md:121 验收口径（10k ≤100ms）的 3–8 倍宽松 |
 | 高亮修复 7 项子断言 | 全部 CONFIRMED | key 因含 index 必唯一；全库 13 处 ForEach 扫描，仅 DetailContent.ets:623 一处 index-only key |
 | 修复声明抽查（clearAll 保墓碑 / 上传竞态条件化 / editContent 单事务） | 全部 CONFIRMED | 上轮"已修复"判定非误判 |
 | 测试审查（67 例、旧套件未改、断言未削弱） | CONFIRMED | rg 实数 67；旧 4 套件不在 git diff 中 |
@@ -32,7 +35,7 @@
 
 ## 2. 确认问题清单（第三批输入）
 
-严重度沿用 docs/08 §4 定义：P0 数据丢失/崩溃/错误写入，P1 功能错误/状态不一致，P2 性能/可维护性，P3 文档/风格。
+严重度沿用 docs/records/02-code-review.md §4 定义：P0 数据丢失/崩溃/错误写入，P1 功能错误/状态不一致，P2 性能/可维护性，P3 文档/风格。
 
 ### P1
 
@@ -57,7 +60,7 @@
 - 证据：`DetailContent.ets:623-631`（key `${index}`）；`loadSnapshot()` 同步读文件 + `@Local snapshotChunks` 整体替换；宽屏 `Index.ets:203-207` 单实例切换 `bookmarkId`。官方 ForEach 语义：键值未变则数据变化不渲染。
 - 复现（≥700vp）：两笺 A/B 快照 DONE、正文各 <4000 字；选 A 再点 B → 正文仍显示 A 的文字（页脚"已存下正文"已随 B 变化）；切"摘录"再切回可恢复。
 - 修法：key 掺入内容，如 `${index}:${chunk.length}:${chunk.slice(0, 32)}`；或切换书签时强制销毁重建正文分支。**不要**回退到整段单 Text（R15）。
-- 验收：宽屏真机/模拟器走查一次并记录到 docs/06。
+- 验收：宽屏真机/模拟器走查一次并记录到 docs/quality/01-walkthrough-checklist.md。
 
 #### T3.4｜R10 folderPath/source 跨端丢失（协议层）　`[x] 最小修已落地`
 
@@ -107,7 +110,7 @@
 1. `[x]` **T3.1 回归用例**：merge/rename 撞名时"只带目标标签的无关书签"不被 touch（dirty/rev 不变）——本轮 `mergeTagsTouchesBothSides` 缺此对照断言，是 N1 漏网原因。
 2. `[x]` **T3.2 用例**：rename/merge/delete 后 `search_text` 含新名不含旧名。
 3. `[x]` **T3.4 用例**：upsertFromRemote 覆盖后 folderPath/source 保留本地值。
-4. `[x]` **基准口径**：`Query.test.ets:137/150` 现为 1000<300ms、10k<800ms，与 `docs/04-实施计划与验收.md:121`（10k ≤100ms）差 3–8 倍。处理：热查询断言收紧到验收口径（或 200ms 内），另设独立的冷启动"记录不判费"用例；`Import.test.ets:139` 的 `elapsed<8000` 在部分设备临界（本轮首跑失败复跑通过），建议改为记录 + 更宽保险阈值（如 12s）并在低端设备复测。
+4. `[x]` **基准口径**：`Query.test.ets:137/150` 现为 1000<300ms、10k<800ms，与 `docs/engineering/02-implementation-plan.md:121`（10k ≤100ms）差 3–8 倍。处理：热查询断言收紧到验收口径（或 200ms 内），另设独立的冷启动"记录不判费"用例；`Import.test.ets:139` 的 `elapsed<8000` 在部分设备临界（本轮首跑失败复跑通过），建议改为记录 + 更宽保险阈值（如 12s）并在低端设备复测。
 5. `[x]` 冲突链路用例（FakeTransport 可测）："恢复本地 → 下一轮同步上传本地版本"由 `SyncEngineTest.restoredLocalConflictUploadsOnNextSync` 覆盖；另补 `tagMergeDoesNotOverwriteRemoteEditOfTargetOnlyBookmark` 覆盖 N1 的 FETCH→UPLOAD 路径。
 
 ## 4. 文档修正清单
@@ -116,19 +119,19 @@
 |---|---|---|
 | `AGENTS.md:16` | "10 个套件 / 63 个用例" | 77（实际落地数） |
 | `docs/wiki/05-build-and-run.md:77` | "63 个" | 77（实际落地数） |
-| `docs/06-走查清单.md:69、104` | "63" | 77（并注明 127.0.0.1:37565 实测） |
-| `docs/08` §10.2（:329-330） | "RepositoryTest（8）"、"Tests run: 63" | RepositoryTest（14）、Tests run: 77（并保留第一/二批历史数字） |
+| `docs/quality/01-walkthrough-checklist.md:69、104` | "63" | 77（并注明 127.0.0.1:37565 实测） |
+| `docs/records/02-code-review.md` §10.2（:329-330） | "RepositoryTest（8）"、"Tests run: 63" | RepositoryTest（14）、Tests run: 77（并保留第一/二批历史数字） |
 | `README.md:78` | "4 个套件 / 30 个用例" | 10 套件 / 77 用例 |
 | `docs/README.md:38` | "63 个设备端用例通过" | 77（补充发现） |
-| `docs/05-实现记录.md:114` | "28 个"（历史文档） | 加"已过期，见 docs/09"注记即可，不改写历史记录 |
+| `docs/records/01-implementation-log.md:114` | "28 个"（历史文档） | 加"已过期，见 records/03-review-follow-up.md"注记即可，不改写历史记录 |
 | `docs/wiki/02-ui-layer.md:29` | "数据源 listAll(true)" | queryPage SQL 分页 |
 | `docs/wiki/02-ui-layer.md:45` | "自动 setRead(READ)" | UNREAD→READING→READ + 30s |
 | `docs/wiki/02-ui-layer.md:49` | "分享 flowpage:// 深链" | 分享原文 URL，深链为复制动作 |
 | `docs/wiki/02-ui-layer.md:92-93` | 卡片字段列表 | 补 `today_candidates` |
 | `docs/wiki/02-ui-layer.md:77-78` | 色板列表 | 补 `highlight` |
 | `docs/wiki/03-data-layer.md:70` | "所有写操作逐条 SQL、无事务" | 更新为事务现状（与 :55 自身矛盾） |
-| `docs/08` §10.5 | 遗留清单 | 补列 R10（本轮确认未修复） |
-| `docs/08` §3.1 完成度矩阵 | "无搜索高亮"等 | 随本批修复更新 |
+| `docs/records/02-code-review.md` §10.5 | 遗留清单 | 补列 R10（本轮确认未修复） |
+| `docs/records/02-code-review.md` §3.1 完成度矩阵 | "无搜索高亮"等 | 随本批修复更新 |
 | 本文档 §2 各条 | — | 修复后逐条勾选并记录验证 |
 
 ## 5. 修复批次建议
@@ -136,7 +139,7 @@
 - **第三批（P1，建议 1–2 天）**：T3.1 → T3.2（同一事务区域，一起改一起测）→ T3.3 → T3.4；每项先写复现用例再改实现。
 - **第四批（P2 + 测试口径 + 文档，建议 1–2 天）**：T3.5–T3.8、§3 基准口径、§4 文档同步。
 - P3 清单作为两批内的顺手修，不设独立门槛。
-- 完成门槛：`hvigorw clean assembleHap` 成功；设备端全通过（记录实际套件/用例数）；docs/09 勾选并回填验证记录；未经明确要求不 commit/push。
+- 完成门槛：`hvigorw clean assembleHap` 成功；设备端全通过（记录实际套件/用例数）；docs/records/03-review-follow-up.md 勾选并回填验证记录；未经明确要求不 commit/push。
 
 ---
 
@@ -237,11 +240,11 @@ hdc -t 127.0.0.1:37565 shell aa test -b com.dunodoge.flowpage -m entry_test -s u
 ```text
 你是 FlowPage（流笺）项目的实现代理。请先完整阅读：
 1. AGENTS.md
-2. docs/09-复审复核与第三批修复计划.md（本轮唯一任务来源；其中问题已经三个只读子代理独立复核确认）
-3. docs/08-代码复审与下一步计划.md §4（R 编号背景）
+2. docs/records/03-review-follow-up.md（本轮唯一任务来源；其中问题已经三个只读子代理独立复核确认）
+3. docs/records/02-code-review.md §4（R 编号背景）
 4. docs/wiki/03-data-layer.md、04-sync-and-services.md
 
-目标：完成 docs/09 §2 第三批（T3.1–T3.4，P1）与 §3/§4 对应的测试补强、文档同步；若时间允许做第四批（T3.5–T3.8）。
+目标：完成 docs/records/03-review-follow-up.md §2 第三批（T3.1–T3.4，P1）与 §3/§4 对应的测试补强、文档同步；若时间允许做第四批（T3.5–T3.8）。
 
 项目事实：
 - HarmonyOS API 26 / ArkTS + ArkUI 状态管理 V2，单 HAP entry。
@@ -261,7 +264,7 @@ hdc -t 127.0.0.1:37565 shell aa test -b com.dunodoge.flowpage -m entry_test -s u
    测试：改名后 search_text 含新名不含旧名。
 3. T3.3 DetailContent 正文分段 ForEach 的 index-only key（DetailContent.ets:631）：key 掺入内容
    （如 ${index}:${chunk.length}:${chunk.slice(0,32)}），不要回退整段单 Text。宽屏(≥700vp)人工走查
-   一次：A→B 切换正文必须更新，结果记入 docs/06。
+   一次：A→B 切换正文必须更新，结果记入 docs/quality/01-walkthrough-checklist.md。
 4. T3.4 upsertFromRemote 与 resolveConflict 覆盖前保留本地 folderPath/source（照 snapshot 三字段的
    保留模式，FlowRepository.ets:209-211 附近）。测试：远端胜出下载后两字段不丢。
 
@@ -271,24 +274,24 @@ hdc -t 127.0.0.1:37565 shell aa test -b com.dunodoge.flowpage -m entry_test -s u
 7. T3.7 卡片序列化分隔符：'|' 换成标题中不可能出现的控制字符（如 \u0001），写入与 TodayCard/
    RecentCard 解析同步改，写入侧标题压单行。
 8. T3.8 fillTags 按页 id 集合过滤；summaryCounts 合并单 SQL。
-9. 测试口径：Query 基准热查询断言对齐 docs/04:121（10k ≤100ms，可放宽到 200ms 内），冷启动单独
+9. 测试口径：Query 基准热查询断言对齐 docs/engineering/02-implementation-plan.md:121（10k ≤100ms，可放宽到 200ms 内），冷启动单独
    记录不判费；Import 5000 条断言放宽保险阈值（12s）并在低端设备复测后回填。
-10. 文档同步（docs/09 §4 全表）：用例数 63→67（AGENTS.md:16、wiki/05:77、docs/06:69/104、
-    docs/08 §10.2、README.md:78、docs/README.md:38）；wiki/02 五处过期表述；wiki/03:70 事务表述；
-    docs/08 §10.5 补列 R10；docs/03 §1 不变量在 T3.2 落地后恢复成立。
+10. 文档同步（docs/records/03-review-follow-up.md §4 全表）：用例数 63→67（AGENTS.md:16、wiki/05:77、docs/quality/01-walkthrough-checklist.md:69/104、
+    docs/records/02-code-review.md §10.2、README.md:78、docs/README.md:38）；wiki/02 五处过期表述；wiki/03:70 事务表述；
+    docs/records/02-code-review.md §10.5 补列 R10；docs/design/01-ui-spec.md §1 不变量在 T3.2 落地后恢复成立。
 
-P3 顺手修（docs/09 §2 P3 清单 1-8，不改行为边界，逐条小 PR 粒度）。
+P3 顺手修（docs/records/03-review-follow-up.md §2 P3 清单 1-8，不改行为边界，逐条小 PR 粒度）。
 
 工作方式：
-- 每个修复先写能复现的自动化用例（不能自动化的记录人工步骤到 docs/06）。
+- 每个修复先写能复现的自动化用例（不能自动化的记录人工步骤到 docs/quality/01-walkthrough-checklist.md）。
 - 每改完一个 .ets 先跑快速 ArkTS 检查（DEVECO_HOME 未设置就直接 hvigorw 全量编译）。
 - 批末 `hvigorw clean assembleHap` + 设备端 Hypium 全量（记录实际套件/用例数）。
 - 不要顺手重构无关模块；不引入新依赖；不改 AGENTS.md 既有规则。
-- 完成后在 docs/09 §2/§3 逐条勾选并回填验证记录（构建/测试命令与数字）。
+- 完成后在 docs/records/03-review-follow-up.md §2/§3 逐条勾选并回填验证记录（构建/测试命令与数字）。
 
 最终交付：
 1. 修改文件清单与每个文件的意图。
 2. 新增/修改测试清单及通过结果（含基准新口径下的数字）。
 3. 构建与设备测试命令、输出摘要。
-4. docs/09 勾选状态与遗留问题（含 R20 as 存量、N6 低端设备复测等待办）。
+4. docs/records/03-review-follow-up.md 勾选状态与遗留问题（含 R20 as 存量、N6 低端设备复测等待办）。
 ```

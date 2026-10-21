@@ -5,9 +5,9 @@ ArkTS + ArkUI 声明式 UI，状态管理 V2；本地 RDB 是唯一事实源，W
 正文快照保存在应用沙箱的普通文本文件中，不参与同步。
 
 本 Wiki 面向需要理解、维护或扩展仓库的开发者，按分层拆解职责、数据流与关键约束。
-产品与设计背景见 [../README.md](../README.md) 与 `docs/01`–`docs/07`。
+产品与设计背景见 [../README.md](../README.md) 与 `docs/product/`、`docs/design/`、`docs/engineering/`。
 
-> 说明：本文以**当前仓库代码**为准。`docs/05-实现记录.md` 是历史批次记录，个别描述已过时
+> 说明：本文以**当前仓库代码**为准。`docs/records/01-implementation-log.md` 是历史批次记录，个别描述已过时
 >（如 28 个用例、已不存在的 `BrowserPage`），以源码与 [AGENTS.md](../../AGENTS.md) 为准。
 
 ## 文档导航
