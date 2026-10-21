@@ -2,6 +2,7 @@ import { relationalStore } from '@kit.ArkData';
 import { util } from '@kit.ArkTS';
 import { Bookmark } from '../../model/Bookmark';
 import { TagCount } from '../../model/Tag';
+import { Tombstone } from '../../model/Tombstone';
 import { Database } from './Database';
 
 export class BookmarkDao {
@@ -337,8 +338,62 @@ export class BookmarkDao {
 
   async purge(id: string): Promise<void> {
     const store = Database.getStore();
+    await this.addTombstone(id, id);
     await store.executeSql('DELETE FROM bookmark_tag WHERE bookmark_id = ?', [id]);
     await store.executeSql('DELETE FROM bookmark WHERE id = ?', [id]);
+  }
+
+  async addTombstone(id: string, remoteId: string): Promise<void> {
+    const store = Database.getStore();
+    await store.executeSql(
+      'INSERT OR REPLACE INTO tombstone (id, remote_id, deleted_at, attempts, last_error) VALUES (?, ?, ?, 0, \'\')',
+      [id, remoteId, Date.now()]
+    );
+  }
+
+  async findTombstone(id: string): Promise<Tombstone | undefined> {
+    const store = Database.getStore();
+    const resultSet = await store.querySql('SELECT * FROM tombstone WHERE id = ?', [id]);
+    let tombstone: Tombstone | undefined = undefined;
+    if (resultSet.goToFirstRow()) {
+      tombstone = this.readTombstone(resultSet);
+    }
+    resultSet.close();
+    return tombstone;
+  }
+
+  async listTombstones(): Promise<Tombstone[]> {
+    const store = Database.getStore();
+    const resultSet = await store.querySql('SELECT * FROM tombstone ORDER BY deleted_at ASC', []);
+    const tombstones: Tombstone[] = [];
+    while (resultSet.goToNextRow()) {
+      tombstones.push(this.readTombstone(resultSet));
+    }
+    resultSet.close();
+    return tombstones;
+  }
+
+  async removeTombstone(id: string): Promise<void> {
+    const store = Database.getStore();
+    await store.executeSql('DELETE FROM tombstone WHERE id = ?', [id]);
+  }
+
+  async markTombstoneFailed(id: string, lastError: string): Promise<void> {
+    const store = Database.getStore();
+    await store.executeSql(
+      'UPDATE tombstone SET attempts = attempts + 1, last_error = ? WHERE id = ?',
+      [lastError, id]
+    );
+  }
+
+  private readTombstone(rs: relationalStore.ResultSet): Tombstone {
+    const tombstone = new Tombstone();
+    tombstone.id = rs.getString(rs.getColumnIndex('id'));
+    tombstone.remoteId = rs.getString(rs.getColumnIndex('remote_id'));
+    tombstone.deletedAt = rs.getLong(rs.getColumnIndex('deleted_at'));
+    tombstone.attempts = rs.getLong(rs.getColumnIndex('attempts'));
+    tombstone.lastError = rs.getString(rs.getColumnIndex('last_error'));
+    return tombstone;
   }
 
   async purgeExpired(days: number): Promise<number> {
@@ -435,5 +490,6 @@ export class BookmarkDao {
     await store.executeSql('DELETE FROM bookmark');
     await store.executeSql('DELETE FROM tag');
     await store.executeSql('DELETE FROM bookmark_tag');
+    await store.executeSql('DELETE FROM tombstone');
   }
 }

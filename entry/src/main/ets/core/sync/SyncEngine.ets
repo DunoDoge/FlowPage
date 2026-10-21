@@ -1,5 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { Bookmark } from '../../model/Bookmark';
+import { Tombstone } from '../../model/Tombstone';
 import { FlowRepository } from '../../repository/FlowRepository';
 import { SyncConfigStore } from './SyncConfigStore';
 import { SyncRecord } from './SyncRecord';
@@ -9,6 +10,7 @@ export class SyncReport {
   uploaded: number = 0;
   downloaded: number = 0;
   skipped: number = 0;
+  deleted: number = 0;
   failed: number = 0;
   firstFailure: string = '';
   message: string = '';
@@ -33,6 +35,26 @@ export class SyncEngine {
       report.failed = report.failed + 1;
       if (report.firstFailure.length === 0) {
         report.firstFailure = error instanceof Error ? error.message : 'UNKNOWN';
+      }
+    }
+  }
+
+  private static async deleteRemote(
+    transport: WebDavTransport,
+    repo: FlowRepository,
+    tombstone: Tombstone,
+    report: SyncReport
+  ): Promise<void> {
+    try {
+      await transport.remove(tombstone.remoteName());
+      await repo.removeTombstone(tombstone.id);
+      report.deleted = report.deleted + 1;
+    } catch (error) {
+      report.failed = report.failed + 1;
+      const message = error instanceof Error ? error.message : 'UNKNOWN';
+      await repo.markTombstoneFailed(tombstone.id, message);
+      if (report.firstFailure.length === 0) {
+        report.firstFailure = message;
       }
     }
   }
@@ -66,6 +88,12 @@ export class SyncEngine {
       for (let i = 0; i < localAll.length; i++) {
         localMap.set(localAll[i].id, localAll[i]);
       }
+      const tombstones = await repo.listTombstones();
+      const tombstoneMap = new Map<string, Tombstone>();
+      for (let i = 0; i < tombstones.length; i++) {
+        tombstoneMap.set(tombstones[i].remoteName(), tombstones[i]);
+        tombstoneMap.set(tombstones[i].id, tombstones[i]);
+      }
       const handled = new Set<string>();
 
       for (let i = 0; i < remoteItems.length; i++) {
@@ -74,6 +102,11 @@ export class SyncEngine {
           continue;
         }
         handled.add(remote.name);
+        const tombstone = tombstoneMap.get(remote.name);
+        if (tombstone !== undefined) {
+          await SyncEngine.deleteRemote(transport, repo, tombstone, report);
+          continue;
+        }
         const local = localMap.get(remote.name);
 
         if (local === undefined) {
@@ -81,8 +114,12 @@ export class SyncEngine {
             const response = await transport.get(remote.name);
             if (response.status === 200) {
               const record = SyncRecord.parse(response.body);
-              await repo.upsertFromRemote(record, remote.etag);
-              report.downloaded = report.downloaded + 1;
+              const applied = await repo.upsertFromRemote(record, remote.etag);
+              if (applied) {
+                report.downloaded = report.downloaded + 1;
+              } else {
+                report.skipped = report.skipped + 1;
+              }
             } else {
               report.failed = report.failed + 1;
             }
@@ -111,8 +148,12 @@ export class SyncEngine {
           }
           const record = SyncRecord.parse(response.body);
           if (record.updatedAt > local.updatedAt) {
-            await repo.upsertFromRemote(record, remote.etag);
-            report.downloaded = report.downloaded + 1;
+            const applied = await repo.upsertFromRemote(record, remote.etag);
+            if (applied) {
+              report.downloaded = report.downloaded + 1;
+            } else {
+              report.skipped = report.skipped + 1;
+            }
           } else {
             await SyncEngine.upload(transport, repo, local, remote.etag, report);
           }
@@ -123,7 +164,7 @@ export class SyncEngine {
 
       for (let i = 0; i < localAll.length; i++) {
         const local = localAll[i];
-        if (handled.has(local.id)) {
+        if (handled.has(local.id) || tombstoneMap.get(local.id) !== undefined) {
           continue;
         }
         const known = remoteMap.get(local.id);
@@ -133,9 +174,20 @@ export class SyncEngine {
         await SyncEngine.upload(transport, repo, local, known === undefined ? '' : known.etag, report);
       }
 
+      for (let i = 0; i < tombstones.length; i++) {
+        const tombstone = tombstones[i];
+        if (handled.has(tombstone.remoteName())) {
+          continue;
+        }
+        await repo.removeTombstone(tombstone.id);
+      }
+
       SyncConfigStore.setLastSync(context, Date.now());
       repo.afterSync();
       report.message = `上传 ${report.uploaded} · 下载 ${report.downloaded} · 跳过 ${report.skipped}`;
+      if (report.deleted > 0) {
+        report.message += ` · 删除 ${report.deleted}`;
+      }
       if (report.failed > 0) {
         report.message += ` · 失败 ${report.failed}`;
         if (report.firstFailure.length > 0) {

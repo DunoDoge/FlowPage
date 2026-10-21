@@ -3,6 +3,7 @@ import { preferences } from '@kit.ArkData';
 import { Bookmark } from '../model/Bookmark';
 import { ImportResult, ImportedBookmark } from '../model/ImportResult';
 import { TagCount } from '../model/Tag';
+import { Tombstone } from '../model/Tombstone';
 import { BookmarkDao } from '../core/db/BookmarkDao';
 import { Database } from '../core/db/Database';
 import { MetadataService } from '../core/service/MetadataService';
@@ -101,11 +102,15 @@ export class FlowRepository {
     await store.flush();
   }
 
-  async upsertFromRemote(record: SyncRecord, etag: string): Promise<void> {
+  async upsertFromRemote(record: SyncRecord, etag: string): Promise<boolean> {
+    const tombstone = await this.dao.findTombstone(record.id);
+    if (tombstone !== undefined) {
+      return false;
+    }
     const existing = await this.dao.findById(record.id);
     const bookmark = record.toBookmark();
     if (bookmark.urlKey.length === 0) {
-      return;
+      return false;
     }
     bookmark.remoteEtag = etag;
     bookmark.dirty = false;
@@ -122,6 +127,7 @@ export class FlowRepository {
     } else {
       await this.dao.insert(bookmark);
     }
+    return true;
   }
 
   async setLinkStatus(id: string, status: number): Promise<void> {
@@ -353,6 +359,18 @@ export class FlowRepository {
       this.notify();
     }
     return count;
+  }
+
+  async listTombstones(): Promise<Tombstone[]> {
+    return this.dao.listTombstones();
+  }
+
+  async removeTombstone(id: string): Promise<void> {
+    await this.dao.removeTombstone(id);
+  }
+
+  async markTombstoneFailed(id: string, message: string): Promise<void> {
+    await this.dao.markTombstoneFailed(id, message);
   }
 
   async listTags(): Promise<TagCount[]> {

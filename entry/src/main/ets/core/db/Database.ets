@@ -67,6 +67,15 @@ const SQL_SYNC_STATE: string =
   'value TEXT NOT NULL' +
   ')';
 
+const SQL_TOMBSTONE: string =
+  'CREATE TABLE IF NOT EXISTS tombstone (' +
+  'id TEXT PRIMARY KEY, ' +
+  'remote_id TEXT NOT NULL DEFAULT \'\', ' +
+  'deleted_at INTEGER NOT NULL, ' +
+  'attempts INTEGER NOT NULL DEFAULT 0, ' +
+  'last_error TEXT NOT NULL DEFAULT \'\'' +
+  ')';
+
 const SQL_INDEXES: string[] = [
   'CREATE UNIQUE INDEX IF NOT EXISTS idx_bookmark_url_key ON bookmark(url_key)',
   'CREATE INDEX IF NOT EXISTS idx_bookmark_stream ON bookmark(deleted, archived, created_at DESC)',
@@ -93,6 +102,7 @@ export class Database {
     await store.executeSql(SQL_BOOKMARK_TAG);
     await store.executeSql(SQL_CONFLICT);
     await store.executeSql(SQL_SYNC_STATE);
+    await store.executeSql(SQL_TOMBSTONE);
     try {
       await store.executeSql('ALTER TABLE bookmark ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1');
     } catch (error) {
@@ -126,5 +136,6 @@ export class Database {
     await store.executeSql('DELETE FROM bookmark_tag');
     await store.executeSql('DELETE FROM conflict');
     await store.executeSql('DELETE FROM sync_state');
+    await store.executeSql('DELETE FROM tombstone');
   }
 }
