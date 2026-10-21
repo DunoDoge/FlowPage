@@ -1,4 +1,5 @@
 /oh_modules
+/build-profile.json5
 **/build
 /.hvigor
 .cxx
