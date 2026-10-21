@@ -1,0 +1,36 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "流笺：把链接收进一册可离线、可搜索的笺里。"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "流笺主界面"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "流笺"
+    },
+    {
+      "name": "share_ability_desc",
+      "value": "从任意应用收下链接"
+    },
+    {
+      "name": "share_ability_label",
+      "value": "收进流笺"
+    },
+    {
+      "name": "today_card_desc",
+      "value": "每天翻出一笺旧收藏"
+    },
+    {
+      "name": "recent_card_desc",
+      "value": "最近收下的三笺"
+    },
+    {
+      "name": "paste_reason",
+      "value": "读取你刚复制的链接，收进流笺"
+    }
+  ]
+}

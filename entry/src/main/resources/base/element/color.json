@@ -1,0 +1,52 @@
+{
+  "color": [
+    {
+      "name": "start_window_background",
+      "value": "#F7F6F2"
+    },
+    {
+      "name": "paper",
+      "value": "#F7F6F2"
+    },
+    {
+      "name": "surface",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "surface_alt",
+      "value": "#EFEDE7"
+    },
+    {
+      "name": "ink",
+      "value": "#121211"
+    },
+    {
+      "name": "ink_secondary",
+      "value": "#6E6C66"
+    },
+    {
+      "name": "ink_tertiary",
+      "value": "#A3A09A"
+    },
+    {
+      "name": "line",
+      "value": "#E4E1D8"
+    },
+    {
+      "name": "line_strong",
+      "value": "#CFCBC0"
+    },
+    {
+      "name": "inverse_ink",
+      "value": "#F7F6F2"
+    },
+    {
+      "name": "danger",
+      "value": "#A33A2E"
+    },
+    {
+      "name": "overlay",
+      "value": "#52121211"
+    }
+  ]
+}
