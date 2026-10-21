@@ -4,6 +4,7 @@ import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { FlowRepository } from '../repository/FlowRepository';
 import { AppState } from '../common/AppState';
+import { platformFailure } from '../common/PlatformError';
 
 const DOMAIN = 0x0000;
 const ROOT_PAGE: string = 'pages/Index';
@@ -42,8 +43,7 @@ export default class EntryAbility extends UIAbility {
       this.context.restoreWindowStage(new LocalStorage());
       hilog.info(DOMAIN, 'flowpage', '%{public}s', 'continuation restoreWindowStage called');
     } catch (error) {
-      const businessError = error as BusinessError;
-      hilog.error(DOMAIN, 'flowpage', 'restoreWindowStage failed code=%{public}d', businessError.code);
+      hilog.error(DOMAIN, 'flowpage', 'restoreWindowStage failed code=%{public}d', platformFailure(error).code);
     }
   }
 
@@ -63,6 +63,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    AppState.shared.abilityContext = this.context;
     try {
       this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
     } catch (err) {

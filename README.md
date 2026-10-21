@@ -75,7 +75,7 @@ hdc shell aa start -a EntryAbility -b com.dunodoge.flowpage
 
 ## 测试
 
-`entry/src/ohosTest` 共 10 个 Hypium 套件 / 77 个用例，覆盖 URL 归一化与去重、ETag 解析、同步上传/下载/跳过、
+`entry/src/ohosTest` 共 10 个 Hypium 套件 / 81 个用例，覆盖 URL 归一化与去重、ETag 解析、同步上传/下载/跳过、
 墓碑删除与重试、`dirty` 竞态、标签 `search_text` 重建、冲突记录与导入/查询基准。测试需要设备或模拟器，且需先安装主 HAP：
 
 ```bash

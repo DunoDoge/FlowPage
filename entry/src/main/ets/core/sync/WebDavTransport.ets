@@ -1,7 +1,7 @@
 import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { platformFailure } from '../../common/PlatformError';
 import { RemoteItem, WebDavResponse } from './WebDavTypes';
 import { SyncTransport } from './SyncTransport';
 import { WebDavXml } from './WebDavXml';
@@ -94,8 +94,7 @@ export class WebDavTransport implements SyncTransport {
       result.etag = this.headerValue(responseHeaders, 'etag');
       return result;
     } catch (error) {
-      const businessError = error as BusinessError;
-      const code = businessError.code === undefined ? 0 : businessError.code;
+      const code = platformFailure(error).code;
       hilog.error(
         0x0000,
         'flowpage',

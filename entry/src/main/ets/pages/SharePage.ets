@@ -1,4 +1,3 @@
-import { common } from '@kit.AbilityKit';
 import { AppState } from '../common/AppState';
 import { BookmarkSource } from '../common/Constants';
 import { domainOf, isValidHttpUrl } from '../common/UrlUtil';
@@ -20,8 +19,10 @@ struct SharePage {
   }
 
   private close(): void {
-    const context = getContext(this) as common.UIExtensionContext;
-    context.terminateSelf();
+    const context = AppState.shared.shareContext;
+    if (context !== undefined) {
+      context.terminateSelf().catch(() => {});
+    }
   }
 
   private parseTags(): string[] {
@@ -46,7 +47,7 @@ struct SharePage {
     }
     this.busy = true;
     try {
-      const context = getContext(this) as common.Context;
+      const context = getContext(this);
       await FlowRepository.get().init(context);
       const outcome = await FlowRepository.get().saveUrl(
         this.urlText,

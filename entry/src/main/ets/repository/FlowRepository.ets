@@ -82,6 +82,7 @@ export class FlowRepository {
     await Database.init(context);
     await this.dao.backfillDomains();
     await this.purgeExpired();
+    this.scheduleCardSnapshot();
   }
 
   private requireContext(): common.Context {
@@ -170,14 +171,16 @@ export class FlowRepository {
     await store.flush();
   }
 
-  // SyncRecord carries neither the local snapshot nor folderPath/source, so a remote-wins
-  // overwrite must keep the current row's values instead of resetting them to empty/0.
-  private carryLocalFields(target: Bookmark, existing: Bookmark): void {
+  // A remote-wins overwrite keeps local-only snapshot fields. Schema 1 records predate
+  // folderPath/source, so those two stay local until the peer upgrades to schema 2.
+  private carryLocalFields(target: Bookmark, existing: Bookmark, remoteHasFolders: boolean): void {
     target.snapshotPath = existing.snapshotPath;
     target.snapshotStatus = existing.snapshotStatus;
     target.snapshotAt = existing.snapshotAt;
-    target.folderPath = existing.folderPath;
-    target.source = existing.source;
+    if (!remoteHasFolders) {
+      target.folderPath = existing.folderPath;
+      target.source = existing.source;
+    }
   }
 
   async upsertFromRemote(record: SyncRecord, etag: string): Promise<boolean> {
@@ -205,7 +208,7 @@ export class FlowRepository {
         bookmark.linkStatus = existing.linkStatus;
         bookmark.linkCheckedAt = existing.linkCheckedAt;
       }
-      this.carryLocalFields(bookmark, existing);
+      this.carryLocalFields(bookmark, existing, record.schema >= 2);
       bookmark.rev = existing.rev + 1;
       await this.dao.update(bookmark);
     } else {
@@ -542,7 +545,7 @@ export class FlowRepository {
       chosen.dirty = true;
       await this.dao.insert(chosen);
     } else {
-      this.carryLocalFields(chosen, existing);
+      this.carryLocalFields(chosen, existing, record.schema >= 2);
       chosen.remoteEtag = existing.remoteEtag;
       chosen.rev = existing.rev + 1;
       chosen.updatedAt = Date.now();

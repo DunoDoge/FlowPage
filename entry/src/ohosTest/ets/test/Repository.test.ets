@@ -10,7 +10,13 @@ import { BookmarkSource, ReadState } from '../../../main/ets/common/Constants';
 import { HighlightSegment, highlightSegments } from '../../../main/ets/common/Highlight';
 import { splitIntoChunks } from '../../../main/ets/common/TextUtil';
 import { deepLinkTextOf, shareContentOf } from '../../../main/ets/common/ShareUtil';
-import { cardLineOf, cardTitleOf, parseCardLine } from '../../../main/ets/common/CardFormat';
+import { CARD_FIELD_SEPARATOR, cardLineOf, cardTitleOf, parseCardLine, parseCardLines } from '../../../main/ets/common/CardFormat';
+import {
+  CARD_KEY_CANDIDATES,
+  CARD_KEY_TODAY_TITLE,
+  CARD_PREFERENCES_NAME,
+  CardSnapshot
+} from '../../../main/ets/core/service/CardSnapshot';
 import { normalizeUrl } from '../../../main/ets/common/UrlUtil';
 
 function joinedSegments(segments: HighlightSegment[]): string {
@@ -145,7 +151,12 @@ export default function repositoryTest() {
       expect(cardTitleOf(title).indexOf('|') >= 0).assertTrue();
       expect(cardTitleOf(title).indexOf('\n')).assertEqual(-1);
       expect(cardTitleOf(title).indexOf('\r')).assertEqual(-1);
+      expect(cardTitleOf('控\u0001制')).assertEqual('控 制');
       const line = cardLineOf(title, 'example.com', 'card-id-1');
+      expect(line.indexOf(CARD_FIELD_SEPARATOR)).assertLarger(0);
+      expect(line.indexOf('\u0001')).assertEqual(-1);
+      expect(line.indexOf('\n')).assertEqual(-1);
+      expect(line.indexOf('%0A')).assertEqual(-1);
       const parsed = parseCardLine(line);
       expect(parsed === undefined).assertFalse();
       if (parsed !== undefined) {
@@ -155,6 +166,28 @@ export default function repositoryTest() {
         expect(parsed.title.indexOf('第二行') >= 0).assertTrue();
       }
       expect(parseCardLine('legacy|format|line') === undefined).assertTrue();
+      const roundTrip = parseCardLines(cardLineOf('甲%01乙', 'a.com', '1'));
+      expect(roundTrip.length).assertEqual(1);
+      expect(roundTrip[0].title).assertEqual('甲%01乙');
+    });
+
+    it('cardSnapshotRoundTripsThroughPreferences', 0, async () => {
+      if (context === undefined) {
+        expect(context === undefined).assertFalse();
+        return;
+      }
+      const store = preferences.getPreferencesSync(context, { name: CARD_PREFERENCES_NAME });
+      const line = cardLineOf('标题\u0001\n第二行', 'example.com', 'card-id-pref');
+      store.putSync(CARD_KEY_TODAY_TITLE, cardTitleOf('标题\u0001\n第二行'));
+      store.putSync(CARD_KEY_CANDIDATES, line);
+      await store.flush();
+      const values = CardSnapshot.readValues(context);
+      expect(values.todayTitle.indexOf('\u0001')).assertEqual(-1);
+      const items = parseCardLines(values.candidates);
+      expect(items.length).assertEqual(1);
+      expect(items[0].id).assertEqual('card-id-pref');
+      expect(items[0].domain).assertEqual('example.com');
+      expect(items[0].title.indexOf('第二行') >= 0).assertTrue();
     });
 
     it('saveEditsWritesOnceWithSingleRevBump', 0, async () => {

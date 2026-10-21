@@ -1,4 +1,3 @@
-import { common } from '@kit.AbilityKit';
 import { LibrarySummary, FlowRepository } from '../repository/FlowRepository';
 import { ConflictRecord } from '../model/Conflict';
 import { AppState } from '../common/AppState';
@@ -43,7 +42,7 @@ export struct SyncPage {
   private async load(): Promise<void> {
     await this.loadSummary();
     await this.loadConflicts();
-    const context = getContext(this) as common.Context;
+    const context = getContext(this);
     try {
       const config = await SyncConfigStore.load(context);
       if (config !== undefined) {
@@ -136,7 +135,7 @@ export struct SyncPage {
     this.syncing = true;
     this.status = '正在同步…';
     try {
-      const context = getContext(this) as common.Context;
+      const context = getContext(this);
       const config = this.currentConfig();
       const serverChanged = await SyncConfigStore.save(context, config);
       if (serverChanged) {
@@ -202,7 +201,7 @@ export struct SyncPage {
   }
 
   private disconnect(): void {
-    const context = getContext(this) as common.Context;
+    const context = getContext(this);
     SyncConfigStore.clear(context);
     this.configured = false;
     this.connected = false;

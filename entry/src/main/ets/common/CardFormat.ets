@@ -1,4 +1,5 @@
-export const CARD_FIELD_SEPARATOR: string = '\u0001';
+// Printable ASCII so the preferences XML file stays valid; encoded fields can never contain it.
+export const CARD_FIELD_SEPARATOR: string = '%01';
 
 export class CardLine {
   title: string = '';
@@ -7,14 +8,29 @@ export class CardLine {
 }
 
 export function cardTitleOf(title: string): string {
-  return title
-    .split('\r').join(' ')
-    .split('\n').join(' ')
-    .split(CARD_FIELD_SEPARATOR).join(' ');
+  let result = '';
+  for (let i = 0; i < title.length; i++) {
+    const code = title.charCodeAt(i);
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) {
+      result += ' ';
+    } else {
+      result += title.charAt(i);
+    }
+  }
+  return result;
+}
+
+function decodeField(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch (error) {
+    return value;
+  }
 }
 
 export function cardLineOf(title: string, domain: string, id: string): string {
-  return `${cardTitleOf(title)}${CARD_FIELD_SEPARATOR}${domain}${CARD_FIELD_SEPARATOR}${id}`;
+  return `${encodeURIComponent(cardTitleOf(title))}${CARD_FIELD_SEPARATOR}` +
+    `${encodeURIComponent(domain)}${CARD_FIELD_SEPARATOR}${encodeURIComponent(id)}`;
 }
 
 export function parseCardLine(line: string): CardLine | undefined {
@@ -23,9 +39,9 @@ export function parseCardLine(line: string): CardLine | undefined {
     return undefined;
   }
   const item = new CardLine();
-  item.title = parts[0];
-  item.domain = parts[1];
-  item.id = parts[2];
+  item.title = decodeField(parts[0]);
+  item.domain = decodeField(parts[1]);
+  item.id = decodeField(parts[2]);
   return item;
 }
 

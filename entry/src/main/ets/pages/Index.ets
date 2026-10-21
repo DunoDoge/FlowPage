@@ -1,4 +1,4 @@
-import { common, ConfigurationConstant } from '@kit.AbilityKit';
+import { ConfigurationConstant } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { mediaquery } from '@kit.ArkUI';
 import { AppState } from '../common/AppState';
@@ -81,7 +81,7 @@ struct Index {
       const store = preferences.getPreferencesSync(getContext(this), { name: 'flowpage_settings' });
       const stored = store.getSync('theme_mode', 'system');
       const mode = typeof stored === 'string' ? stored : 'system';
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = getContext(this);
       if (mode === 'light') {
         context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT);
       } else if (mode === 'dark') {
@@ -94,7 +94,7 @@ struct Index {
 
   private async initRepository(): Promise<void> {
     try {
-      const context = getContext(this) as common.Context;
+      const context = getContext(this);
       await FlowRepository.get().init(context);
       this.ready = true;
       if (this.isWide && this.appState.selectedId.length === 0) {

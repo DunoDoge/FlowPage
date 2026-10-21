@@ -99,33 +99,33 @@ export class Database {
       securityLevel: relationalStore.SecurityLevel.S1
     };
     const store = await relationalStore.getRdbStore(context, config);
+    await Database.applySchema(store);
+    Database.store = store;
+    return store;
+  }
+
+  // Idempotent: safe for both a fresh store and an existing one missing later columns.
+  static async applySchema(store: relationalStore.RdbStore): Promise<void> {
     await store.executeSql(SQL_BOOKMARK);
     await store.executeSql(SQL_TAG);
     await store.executeSql(SQL_BOOKMARK_TAG);
     await store.executeSql(SQL_CONFLICT);
     await store.executeSql(SQL_SYNC_STATE);
     await store.executeSql(SQL_TOMBSTONE);
-    try {
-      await store.executeSql('ALTER TABLE bookmark ADD COLUMN dirty INTEGER NOT NULL DEFAULT 1');
-    } catch (error) {
-    }
-    try {
-      await store.executeSql('ALTER TABLE bookmark ADD COLUMN link_status INTEGER NOT NULL DEFAULT 0');
-    } catch (error) {
-    }
-    try {
-      await store.executeSql('ALTER TABLE bookmark ADD COLUMN link_checked_at INTEGER NOT NULL DEFAULT 0');
-    } catch (error) {
-    }
-    try {
-      await store.executeSql('ALTER TABLE bookmark ADD COLUMN domain TEXT NOT NULL DEFAULT \'\'');
-    } catch (error) {
-    }
+    await Database.addColumn(store, 'dirty INTEGER NOT NULL DEFAULT 1');
+    await Database.addColumn(store, 'link_status INTEGER NOT NULL DEFAULT 0');
+    await Database.addColumn(store, 'link_checked_at INTEGER NOT NULL DEFAULT 0');
+    await Database.addColumn(store, 'domain TEXT NOT NULL DEFAULT \'\'');
     for (let i = 0; i < SQL_INDEXES.length; i++) {
       await store.executeSql(SQL_INDEXES[i]);
     }
-    Database.store = store;
-    return store;
+  }
+
+  private static async addColumn(store: relationalStore.RdbStore, definition: string): Promise<void> {
+    try {
+      await store.executeSql(`ALTER TABLE bookmark ADD COLUMN ${definition}`);
+    } catch (error) {
+    }
   }
 
   static getStore(): relationalStore.RdbStore {

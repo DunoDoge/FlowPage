@@ -95,7 +95,7 @@ export class BookmarkDao {
 
   async insert(bookmark: Bookmark): Promise<void> {
     const store = Database.getStore();
-    await store.beginTransaction();
+    store.beginTransaction();
     try {
       await store.insert('bookmark', this.toBucket(bookmark));
       await this.syncTags(bookmark.id, bookmark.tags);
@@ -108,7 +108,7 @@ export class BookmarkDao {
 
   async update(bookmark: Bookmark): Promise<void> {
     const store = Database.getStore();
-    await store.beginTransaction();
+    store.beginTransaction();
     try {
       await this.writeRow(bookmark);
       await this.syncTags(bookmark.id, bookmark.tags);
@@ -523,7 +523,7 @@ export class BookmarkDao {
   private async setSearchField(id: string, column: string, value: string): Promise<void> {
     const store = Database.getStore();
     const now = Date.now();
-    await store.beginTransaction();
+    store.beginTransaction();
     try {
       await store.executeSql(
         `UPDATE bookmark SET ${column} = ?, updated_at = ?, rev = rev + 1, dirty = 1 WHERE id = ?`,
@@ -570,7 +570,7 @@ export class BookmarkDao {
     bookmark.dirty = true;
     bookmark.rebuildSearch();
     const store = Database.getStore();
-    await store.beginTransaction();
+    store.beginTransaction();
     try {
       await this.writeRow(bookmark);
       await this.syncTags(bookmark.id, tags);
@@ -810,7 +810,7 @@ export class BookmarkDao {
       return true;
     }
     const store = Database.getStore();
-    await store.beginTransaction();
+    store.beginTransaction();
     try {
       const oldName = await this.tagNameOf(id);
       const affected = await this.loadBookmarksByTag(id);
@@ -830,7 +830,7 @@ export class BookmarkDao {
 
   async deleteTag(id: string): Promise<void> {
     const store = Database.getStore();
-    await store.beginTransaction();
+    store.beginTransaction();
     try {
       const name = await this.tagNameOf(id);
       const affected = await this.loadBookmarksByTag(id);
@@ -847,7 +847,7 @@ export class BookmarkDao {
 
   async mergeTags(sourceId: string, targetId: string): Promise<void> {
     const store = Database.getStore();
-    await store.beginTransaction();
+    store.beginTransaction();
     try {
       const sourceName = await this.tagNameOf(sourceId);
       const targetName = await this.tagNameOf(targetId);
@@ -871,7 +871,7 @@ export class BookmarkDao {
   async insertBatch(bookmarks: Bookmark[]): Promise<void> {
     const store = Database.getStore();
     const tagCache = new Map<string, string>();
-    await store.beginTransaction();
+    store.beginTransaction();
     try {
       for (let i = 0; i < bookmarks.length; i++) {
         await store.insert('bookmark', this.toBucket(bookmarks[i]));
@@ -905,7 +905,7 @@ export class BookmarkDao {
 
   async clearAll(): Promise<void> {
     const store = Database.getStore();
-    await store.beginTransaction();
+    store.beginTransaction();
     try {
       await store.executeSql('DELETE FROM bookmark');
       await store.executeSql('DELETE FROM tag');

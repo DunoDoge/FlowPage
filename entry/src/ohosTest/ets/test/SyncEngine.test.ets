@@ -349,7 +349,7 @@ export default function syncEngineTest() {
       }
     });
 
-    it('downloadKeepsLocalFolderPathAndSource', 0, async () => {
+    it('downloadKeepsLocalFoldersForLegacyRecord', 0, async () => {
       if (context === undefined) {
         expect(context === undefined).assertFalse();
         return;
@@ -363,6 +363,7 @@ export default function syncEngineTest() {
 
       const transport = new FakeTransport();
       const remote = new SyncRecord();
+      remote.schema = 1;
       remote.id = local.id;
       remote.url = local.url;
       remote.title = '远端标题';
@@ -379,6 +380,40 @@ export default function syncEngineTest() {
         expect(after.title).assertEqual('远端标题');
         expect(after.folderPath).assertEqual('工作/工具');
         expect(after.source).assertEqual(BookmarkSource.IMPORT);
+      }
+    });
+
+    it('downloadAppliesRemoteFoldersFromSchemaTwo', 0, async () => {
+      if (context === undefined) {
+        expect(context === undefined).assertFalse();
+        return;
+      }
+      const dao = new BookmarkDao();
+      const local = Bookmark.create('https://example.com/schema2-folder', '本地标题', BookmarkSource.IMPORT);
+      local.folderPath = '本地/旧';
+      local.updatedAt = Date.now() - 10000;
+      await dao.insert(local);
+      await dao.setRemoteEtagIfUnchanged(local.id, '"r1"', local.rev, local.updatedAt);
+
+      const transport = new FakeTransport();
+      const remote = new SyncRecord();
+      remote.id = local.id;
+      remote.url = local.url;
+      remote.title = '远端标题';
+      remote.createdAt = local.createdAt;
+      remote.updatedAt = Date.now() - 5000;
+      remote.rev = 2;
+      remote.folderPath = '远端/新';
+      remote.source = BookmarkSource.SHARE;
+      transport.seed(local.id, remote.toJson(), '"r2"');
+
+      const report = await SyncEngine.run(transport, context);
+      expect(report.downloaded).assertEqual(1);
+      const after = await dao.findById(local.id);
+      expect(after === undefined).assertFalse();
+      if (after !== undefined) {
+        expect(after.folderPath).assertEqual('远端/新');
+        expect(after.source).assertEqual(BookmarkSource.SHARE);
       }
     });
 

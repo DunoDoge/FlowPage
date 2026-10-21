@@ -74,18 +74,18 @@ hdc shell aa start -a EntryAbility -b com.dunodoge.flowpage
 
 ## 5. 设备端测试
 
-测试位于 `entry/src/ohosTest`，10 个套件、77 个 Hypium 用例（2026-10-21 第三/四批）：
+测试位于 `entry/src/ohosTest`，10 个套件、81 个 Hypium 用例（2026-10-21 第三/四批 + 收尾批次）：
 
 | 套件 | 覆盖 |
 |---|---|
 | `WebDavXmlTest` | ETag 大小写/缺失、目录过滤、URL 解码 |
 | `SyncPlannerTest` | 上传/下载/跳过/采纳 ETag 的规划分支 |
-| `SyncEngineTest` | FakeTransport 驱动上传、下载、墓碑删除、重试、不复活、标签合并不覆盖远端、下载保留 folderPath/source、恢复本地后下轮上传 |
-| `SyncStoreTest` | URL 归一化、去重、墓碑、dirty 竞态、冲突记录 |
+| `SyncEngineTest` | FakeTransport 驱动上传、下载、墓碑删除、重试、不复活、标签合并不覆盖远端、schema 1 下载保留本地 folderPath/source、schema 2 下载采用远端值、恢复本地后下轮上传 |
+| `SyncStoreTest` | URL 归一化、去重、墓碑、dirty 竞态、冲突记录、SyncRecord schema 2、旧库 `applySchema` 迁移 |
 | `TagSyncTest` | 标签改名/合并/删除 dirty 与 `search_text` 重建、只含目标标签的书签不受影响、重名合并、回收站计数 |
 | `SnapshotTest` | clearAll/purgeExpired/purge/purgeFromRemote 快照文件清理 |
 | `ConflictTest` | 冲突计数、列表、恢复本地/采用远端、采用远端保留 folderPath/source |
-| `RepositoryTest` | 单次编辑 rev、阅读状态、自动快照开关、摘要口径、批次回滚、卡片序列化、纯函数 |
+| `RepositoryTest` | 单次编辑 rev、阅读状态、自动快照开关、摘要口径、批次回滚、卡片序列化与 preferences 往返、纯函数 |
 | `QueryTest` | SQL 分页、关键字/标签过滤、LIKE 转义、域名排序、冷/热查询基准 |
 | `ImportTest` | 解析统计、预览、去重、取消、失败清单、5000 条导入记录（12s 保险阈值） |
 
@@ -99,7 +99,9 @@ hdc shell aa test -b com.dunodoge.flowpage -m entry_test \
   -s unittest OpenHarmonyTestRunner -s timeout 90000
 ```
 
-- 测试依赖设备端的 `UIAbility` 上下文（`abilityDelegatorRegistry.getCurrentTopAbility()`），**不能当本地单测跑**。
+- 设备端用例依赖 `UIAbility` 上下文（`abilityDelegatorRegistry.getCurrentTopAbility()`），**不能当本地单测跑**。
+- 纯函数（卡片编码、高亮、分段）另有本地入口 `entry/src/test`：`hvigorw test`。它需要 SDK 的 previewer
+  可执行文件；本机 SDK 未安装该包时会报 `previewer/common/bin ENOENT`，属环境缺失。
 - `SyncEngineTest` / `SyncStoreTest` 各用独立数据库名，并在 `beforeEach` 调 `Database.reset()`；不要并行跑两个测试进程。
 - 测试 HAP 的模块名是 `entry_test`（`entry/src/ohosTest/module.json5`）。
 

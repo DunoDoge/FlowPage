@@ -66,7 +66,7 @@ setTags/fillTags` 已处理；标签改名/合并/删除也在同一事务内按
 因此新增列时必须同时：
 
 1. 改 `Database.SQL_BOOKMARK`（新库直接带上该列）；
-2. 在 `init()` 末尾补一条 `try { ALTER TABLE bookmark ADD COLUMN ... } catch {}`（旧库升级）。
+2. 在 `applySchema()` 的 `addColumn()` 列表补一条定义（旧库升级）。
 
 没有 `DB_VERSION`、没有迁移事务、没有回滚。插入/更新、编辑正文、批量导入、清空本机、标签改名/合并/删除
 等写操作已在显式事务内执行（`beginTransaction/commit/rollBack`）；单个状态字段的 `UPDATE` 仍是单条 SQL。

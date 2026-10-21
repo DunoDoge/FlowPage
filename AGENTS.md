@@ -13,7 +13,7 @@
 | 状态 | `@ObservedV2` + `@Trace` + `@ComponentV2` + `@Local` / `@Param` / `@Event` / `@Monitor` |
 | 数据 | RDB `flowpage.db`（6 表 + 6 索引）、preferences、`filesDir/snapshots/*.txt` |
 | 同步 | WebDAV（Basic Auth），ETag 增量 + LWW；无分布式 KV、无账号体系 |
-| 测试 | `@ohos/hypium`，`entry/src/ohosTest` 10 个套件 / 77 个用例，仅设备端 |
+| 测试 | `@ohos/hypium`，`entry/src/ohosTest` 10 个套件 / 81 个用例，仅设备端 |
 
 ## 构建与验证（顺序有讲究）
 
@@ -30,6 +30,8 @@ codelinter -c code-linter.json5   # 当前 0 error / 1 条 startIcon 性能建�
   `/data/service/hnp/hmos-clt.org/hmos-clt_1.0.0/hvigor/bin/hvigorw`。
 - 首次克隆或依赖变化后先 `ohpm install`；然后每次改完 `.ets` 先跑会话内的 `check_ets_files`
   （快速 ArkTS 严格模式检查），再跑 `hvigorw assembleHap`；不要用 `devecocli build` 作为验证门禁。
+- 纯函数测试入口是 `entry/src/test`（`hvigorw test`），与设备端 `entry/src/ohosTest` 分开；本机 SDK
+  未安装 previewer 包时 `hvigorw test` 会停在 `previewer/common/bin ENOENT`，此时只能跑设备端套件。
 - 设备端测试（真机/模拟器）：
 
 ```bash
@@ -76,11 +78,14 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
 - 上传竞态：PUT 前记录 `rev + updatedAt`，成功后仅当仍匹配才回填 ETag 并清 `dirty`；不匹配说明同步期间
   又被编辑，必须保持 dirty。
 - 数据库没有版本号/事务迁移框架：建表用 `CREATE TABLE IF NOT EXISTS`，加列同时改 `Database.SQL_BOOKMARK`
-  并在 `Database.init()` 末尾补一条吞异常的 `ALTER TABLE`（现有 `dirty` / `link_status` / `link_checked_at` 即此模式）。
+  并在 `Database.applySchema()` 的 `addColumn()` 列表补一条吞异常的 `ALTER TABLE`（现有 `dirty` /
+  `link_status` / `link_checked_at` / `domain` 即此模式）；`SyncStoreTest` 用旧表结构验证迁移幂等。
 
 ## 代码约定
 
 - ArkTS 严格子集：禁止 `any`、`as` 断言、结构化类型、动态属性访问；对象字面量必须有显式类型上下文。
+  存量 `as` 只剩 5 处平台类型边界（`JSON.parse` ×2、WebDAV 动词/响应头、`BusinessError` 统一收口在
+  `common/PlatformError.ets`），新增业务代码不要再用 `as`。
 - 主 UI 统一 V2 装饰器；**只有** `entry/src/main/ets/widget/pages/` 的桌面卡片使用 V1
   `@Component` + `@LocalStorageProp`（FormKit 约束），不要混用。
 - 颜色一律 `$r('app.color.*')`（`resources/base|dark/element/color.json` 成对维护）。当前没有 i18n 层，

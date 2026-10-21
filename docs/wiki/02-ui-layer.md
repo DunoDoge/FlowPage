@@ -93,7 +93,9 @@
 - 这是全仓库**唯一**使用 V1 `@Component` + `@LocalStorageProp` 的地方，不能改成 V2。
 - 数据由 `CardSnapshot` 写入 `flowpage_card` preferences，字段为 `today_title` / `today_domain` /
   `today_id` / `recent_lines` / `total_count` / `today_candidates`。
-- `recent_lines` 与 `today_candidates` 是「标题 \u0001 域名 \u0001 id」以换行分隔的字符串；标题写入前压成
-  单行，分隔符用标题中不可能出现的 `\u0001`。点击用 `postCardAction({ action: 'router' })` 带
-  `bookmarkId` 拉起 `EntryAbility`（解析统一走 `common/CardFormat.ets`）。
+- `recent_lines` 与 `today_candidates` 是「标题 `%01` 域名 `%01` id」以换行分隔的字符串，三个字段各自
+  `encodeURIComponent`；`%01` 是不会出现在编码结果中的可打印 ASCII。不要改用 `\u0001` 等控制字符：
+  preferences 以 XML 存储，控制字符会让整个文件变成 `*.broken`，卡片进程只能读到默认值。标题写入前
+  还会压成单行并清掉控制字符。点击用 `postCardAction({ action: 'router' })` 带 `bookmarkId` 拉起
+  `EntryAbility`（解析统一走 `common/CardFormat.ets`）。
 - 卡片配置在 `resources/base/profile/form_config.json`，Ability 为 `TodayCardAbility`。

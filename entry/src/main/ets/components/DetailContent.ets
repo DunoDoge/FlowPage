@@ -1,4 +1,4 @@
-import { common, Want } from '@kit.AbilityKit';
+import { Want } from '@kit.AbilityKit';
 import { KeyCode } from '@kit.InputKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { systemShare } from '@kit.ShareKit';
@@ -211,16 +211,18 @@ export struct DetailContent {
     if (!this.hasBookmark) {
       return;
     }
-    try {
-      const context = getContext(this) as common.UIAbilityContext;
-      const want: Want = {
-        action: 'ohos.want.action.viewData',
-        uri: this.bookmark.url
-      };
-      context.startAbility(want);
-    } catch (error) {
+    const context = AppState.shared.abilityContext;
+    if (context === undefined) {
       AppState.shared.toast('没有找到可打开它的应用');
+      return;
     }
+    const want: Want = {
+      action: 'ohos.want.action.viewData',
+      uri: this.bookmark.url
+    };
+    context.startAbility(want).catch(() => {
+      AppState.shared.toast('没有找到可打开它的应用');
+    });
   }
 
   private async shareBookmark(): Promise<void> {
@@ -234,9 +236,13 @@ export struct DetailContent {
       description: domainOf(this.bookmark.url)
     });
     const controller = new systemShare.ShareController(data);
+    const shareContext = AppState.shared.abilityContext;
+    if (shareContext === undefined) {
+      AppState.shared.toast('没有拉起分享面板');
+      return;
+    }
     try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      await controller.show(context, {
+      await controller.show(shareContext, {
         selectionMode: systemShare.SelectionMode.SINGLE,
         previewMode: systemShare.SharePreviewMode.DEFAULT
       });

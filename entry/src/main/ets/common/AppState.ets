@@ -1,3 +1,4 @@
+import { common } from '@kit.AbilityKit';
 import { Pane } from './Constants';
 
 @ObservedV2
@@ -20,6 +21,9 @@ export class AppState {
   @Trace tagFilter: string = '';
   @Trace inboxUrl: string = '';
   @Trace showInbox: boolean = false;
+  // Ability contexts are published once at startup so pages never cast getContext().
+  abilityContext: common.UIAbilityContext | undefined = undefined;
+  shareContext: common.UIExtensionContext | undefined = undefined;
   private routePending: boolean = false;
 
   notifyChanged(): void {

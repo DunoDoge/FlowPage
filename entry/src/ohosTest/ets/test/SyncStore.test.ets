@@ -1,5 +1,6 @@
 import { describe, beforeAll, beforeEach, it, expect } from '@ohos/hypium';
 import { abilityDelegatorRegistry } from '@kit.TestKit';
+import { relationalStore } from '@kit.ArkData';
 import { common, UIAbility } from '@kit.AbilityKit';
 import { Database } from '../../../main/ets/core/db/Database';
 import { BookmarkDao } from '../../../main/ets/core/db/BookmarkDao';
@@ -75,6 +76,73 @@ export default function syncStoreTest() {
       const applied = await FlowRepository.get().upsertFromRemote(record, '"remote"');
       expect(applied).assertFalse();
       expect((await dao.findById(bookmark.id)) === undefined).assertTrue();
+    });
+
+    it('syncRecordCarriesFolderAndSource', 0, () => {
+      const bookmark = Bookmark.create('https://example.com/record-schema2', '记录', BookmarkSource.MANUAL);
+      bookmark.folderPath = '工作/工具';
+      bookmark.source = BookmarkSource.SHARE;
+      const record = SyncRecord.fromBookmark(bookmark);
+      expect(record.schema).assertEqual(2);
+      const parsed = SyncRecord.parse(record.toJson());
+      expect(parsed.schema).assertEqual(2);
+      expect(parsed.folderPath).assertEqual('工作/工具');
+      expect(parsed.source).assertEqual(BookmarkSource.SHARE);
+      const legacy = SyncRecord.parse('{"schema":1,"id":"legacy","url":"https://example.com/legacy"}');
+      expect(legacy.schema).assertEqual(1);
+      expect(legacy.folderPath).assertEqual('');
+      expect(legacy.source).assertEqual(BookmarkSource.MANUAL);
+    });
+
+    it('appliesSchemaToLegacyBookmarkTable', 0, async () => {
+      if (context === undefined) {
+        expect(context === undefined).assertFalse();
+        return;
+      }
+      const legacyName = 'flowpage_legacy_test.db';
+      try {
+        await relationalStore.deleteRdbStore(context, legacyName);
+      } catch (error) {
+      }
+      const legacy = await relationalStore.getRdbStore(context, {
+        name: legacyName,
+        securityLevel: relationalStore.SecurityLevel.S1
+      });
+      await legacy.executeSql(
+        'CREATE TABLE bookmark (' +
+        'id TEXT PRIMARY KEY, ' +
+        'url TEXT NOT NULL, ' +
+        'url_key TEXT NOT NULL, ' +
+        'title TEXT NOT NULL DEFAULT \'\', ' +
+        'folder_path TEXT NOT NULL DEFAULT \'\', ' +
+        'source INTEGER NOT NULL DEFAULT 0, ' +
+        'read_state INTEGER NOT NULL DEFAULT 0, ' +
+        'starred INTEGER NOT NULL DEFAULT 0, ' +
+        'archived INTEGER NOT NULL DEFAULT 0, ' +
+        'deleted INTEGER NOT NULL DEFAULT 0, ' +
+        'created_at INTEGER NOT NULL, ' +
+        'updated_at INTEGER NOT NULL' +
+        ')'
+      );
+      await legacy.executeSql(
+        'INSERT INTO bookmark (id, url, url_key, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+        ['legacy', 'https://legacy.example/a', 'https://legacy.example/a', '旧版本', 1, 1]
+      );
+      await Database.applySchema(legacy);
+      await Database.applySchema(legacy);
+      const resultSet = await legacy.querySql(
+        'SELECT domain, dirty, link_status, link_checked_at, folder_path, source FROM bookmark WHERE id = ?',
+        ['legacy']
+      );
+      expect(resultSet.goToFirstRow()).assertTrue();
+      expect(resultSet.getString(resultSet.getColumnIndex('domain'))).assertEqual('');
+      expect(resultSet.getLong(resultSet.getColumnIndex('dirty'))).assertEqual(1);
+      expect(resultSet.getLong(resultSet.getColumnIndex('link_status'))).assertEqual(0);
+      expect(resultSet.getLong(resultSet.getColumnIndex('link_checked_at'))).assertEqual(0);
+      expect(resultSet.getString(resultSet.getColumnIndex('folder_path'))).assertEqual('');
+      expect(resultSet.getLong(resultSet.getColumnIndex('source'))).assertEqual(0);
+      resultSet.close();
+      await relationalStore.deleteRdbStore(context, legacyName);
     });
 
     it('keepsDirtyWhenBookmarkChangedDuringUpload', 0, async () => {

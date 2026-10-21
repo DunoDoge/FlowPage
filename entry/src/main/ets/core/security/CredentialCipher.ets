@@ -2,7 +2,7 @@ import { huks } from '@kit.UniversalKeystoreKit';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { util } from '@kit.ArkTS';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { platformFailure } from '../../common/PlatformError';
 
 const KEY_ALIAS: string = 'flowpage_sync_credential_key';
 const AAD_TEXT: string = 'flowpage-sync-credential';
@@ -94,10 +94,9 @@ export class CredentialCipher {
     try {
       return await CredentialCipher.decryptInner(stored);
     } catch (error) {
-      const businessError = error as BusinessError;
-      const code = businessError.code === undefined ? -1 : businessError.code;
-      hilog.error(0x0000, 'flowpage', 'credential decrypt failed code=%{public}d message=%{public}s', code, businessError.message);
-      throw new Error(`HUKS_${code}`);
+      const failure = platformFailure(error, -1);
+      hilog.error(0x0000, 'flowpage', 'credential decrypt failed code=%{public}d message=%{public}s', failure.code, failure.message);
+      throw new Error(`HUKS_${failure.code}`);
     }
   }
 

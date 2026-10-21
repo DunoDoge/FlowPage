@@ -2,11 +2,13 @@ import { ShareExtensionAbility, UIExtensionContentSession, Want } from '@kit.Abi
 import { systemShare } from '@kit.ShareKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { extractFirstUrl } from '../common/UrlUtil';
+import { AppState } from '../common/AppState';
 
 const DOMAIN = 0x0000;
 
 export default class ShareAbility extends ShareExtensionAbility {
   onSessionCreate(want: Want, session: UIExtensionContentSession): void {
+    AppState.shared.shareContext = this.context;
     systemShare.getSharedData(want).then((data: systemShare.SharedData) => {
       const records = data.getRecords();
       let sharedUrl = '';

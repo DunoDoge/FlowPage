@@ -1,4 +1,4 @@
-import { common, ConfigurationConstant } from '@kit.AbilityKit';
+import { ConfigurationConstant } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { picker, fileIo as fs } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
@@ -64,7 +64,7 @@ export struct SettingsPage {
       const store = preferences.getPreferencesSync(getContext(this), { name: SETTINGS_NAME });
       store.putSync('theme_mode', mode);
       store.flush().catch(() => {});
-      const context = getContext(this) as common.UIAbilityContext;
+      const context = getContext(this);
       if (mode === 'light') {
         context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT);
       } else if (mode === 'dark') {

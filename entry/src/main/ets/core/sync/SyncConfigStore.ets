@@ -22,13 +22,17 @@ export class SyncConfigStore {
     return `${base}|${user.trim().toLowerCase()}`;
   }
 
+  private static parseStored(raw: string): StoredConfig {
+    return JSON.parse(raw) as StoredConfig;
+  }
+
   private static storedFingerprint(store: preferences.Preferences): string {
     const raw = store.getSync('webdav_config', '');
     if (typeof raw !== 'string' || raw.length === 0) {
       return '';
     }
     try {
-      const parsed = JSON.parse(raw) as StoredConfig;
+      const parsed = SyncConfigStore.parseStored(raw);
       const stored = typeof parsed.fingerprint === 'string' ? parsed.fingerprint : '';
       if (stored.length > 0) {
         return stored;
@@ -49,7 +53,7 @@ export class SyncConfigStore {
       let userText = '';
       let encryptedText = '';
       if (typeof raw === 'string' && raw.length > 0) {
-        const parsed = JSON.parse(raw) as StoredConfig;
+        const parsed = SyncConfigStore.parseStored(raw);
         urlText = typeof parsed.url === 'string' ? parsed.url : '';
         userText = typeof parsed.user === 'string' ? parsed.user : '';
         encryptedText = typeof parsed.passwordEnc === 'string' ? parsed.passwordEnc : '';

@@ -118,9 +118,10 @@ LWW 比较的是 `updatedAt`，`rev` 只用于并发写入检测与记录版本�
 
 ## 5. 合并与冲突
 
-[SyncRecord.ets](../../entry/src/main/ets/core/sync/SyncRecord.ets) 是远端 JSON 的字段白名单（schema 1）：
-id、url、标题/摘要/站点/图标/封面、备注/摘录、标签、时间戳、阅读状态、星标/归档/删除、rev、deviceId、
-链接状态。不含 `snapshotPath`、`searchText`、`remoteEtag`、`dirty`。
+[SyncRecord.ets](../../entry/src/main/ets/core/sync/SyncRecord.ets) 是远端 JSON 的字段白名单（schema 2）：
+id、url、标题/摘要/站点/图标/封面、备注/摘录、标签、`folderPath`、`source`、时间戳、阅读状态、
+星标/归档/删除、rev、deviceId、链接状态。不含 `snapshotPath`、`searchText`、`remoteEtag`、`dirty`。
+解析兼容 schema 1：缺 `folderPath/source` 时按空值/`MANUAL` 读取。
 
 `FlowRepository.upsertFromRemote(record, etag)`：
 
@@ -128,13 +129,14 @@ id、url、标题/摘要/站点/图标/封面、备注/摘录、标签、时间�
 2. `normalizeUrl(record.url)` 为空 → 拒绝。
 3. 本地已有记录且 `dirty=true` → 把本地与远端 JSON 写入 `conflict`（`reason='lww-remote-wins'`），
    然后仍以远端版本覆盖（LWW 远端优先）。
-4. 保留本地正文快照字段（`snapshotPath/snapshotStatus/snapshotAt`）与 `folderPath/source`（协议不传这两项，
-   不能让下载把它们覆盖成空/0）；若远端 `linkStatus=0` 而本地已有检查结果，则保留本地链接状态。
+4. 正文快照字段（`snapshotPath/snapshotStatus/snapshotAt`）始终保留本地值；`folderPath/source` 在远端为
+   schema 1 时保留本地值，schema 2 起以远端为准（对端可以显式清空文件夹）；若远端 `linkStatus=0` 而本地
+   已有检查结果，则保留本地链接状态。
 5. 已有记录 `rev = 本地 rev + 1`，写入 `remoteEtag`，`dirty=false`；新记录直接插入。
 
 冲突表在同步页可见：显示数量与列表，可展开查看本地/远端 JSON，并选择「恢复本地」或「采用远端」。
-恢复会写回 bookmark、`rev+1`、`dirty=1`，并删除对应 conflict 记录；采用远端时同样保留本地 `folderPath/source`
-与快照三字段。未做字段级合并，极端同时修改
+恢复会写回 bookmark、`rev+1`、`dirty=1`，并删除对应 conflict 记录；采用远端时快照三字段保留本地，
+`folderPath/source` 按记录 schema 处理（schema 1 保留本地，schema 2 采用远端）。未做字段级合并，极端同时修改
 仍可能丢失败方字段。
 
 ## 6. 服务卡片

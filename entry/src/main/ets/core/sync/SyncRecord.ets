@@ -1,9 +1,9 @@
 import { Bookmark } from '../../model/Bookmark';
-import { SnapshotStatus } from '../../common/Constants';
+import { BookmarkSource, SnapshotStatus } from '../../common/Constants';
 import { normalizeUrl } from '../../common/UrlUtil';
 
 export class SyncRecord {
-  schema: number = 1;
+  schema: number = 2;
   id: string = '';
   url: string = '';
   title: string = '';
@@ -14,6 +14,8 @@ export class SyncRecord {
   note: string = '';
   excerpt: string = '';
   tags: string[] = [];
+  folderPath: string = '';
+  source: number = BookmarkSource.MANUAL;
   createdAt: number = 0;
   updatedAt: number = 0;
   readState: number = 0;
@@ -38,6 +40,8 @@ export class SyncRecord {
     record.note = bookmark.note;
     record.excerpt = bookmark.excerpt;
     record.tags = bookmark.tags;
+    record.folderPath = bookmark.folderPath;
+    record.source = bookmark.source;
     record.createdAt = bookmark.createdAt;
     record.updatedAt = bookmark.updatedAt;
     record.readState = bookmark.readState;
@@ -66,6 +70,8 @@ export class SyncRecord {
     record.note = typeof raw.note === 'string' ? raw.note : '';
     record.excerpt = typeof raw.excerpt === 'string' ? raw.excerpt : '';
     record.tags = raw.tags !== undefined ? raw.tags : [];
+    record.folderPath = typeof raw.folderPath === 'string' ? raw.folderPath : '';
+    record.source = typeof raw.source === 'number' ? raw.source : BookmarkSource.MANUAL;
     record.createdAt = typeof raw.createdAt === 'number' ? raw.createdAt : 0;
     record.updatedAt = typeof raw.updatedAt === 'number' ? raw.updatedAt : 0;
     record.readState = typeof raw.readState === 'number' ? raw.readState : 0;
@@ -93,6 +99,8 @@ export class SyncRecord {
     bookmark.note = this.note;
     bookmark.excerpt = this.excerpt;
     bookmark.tags = this.tags;
+    bookmark.folderPath = this.folderPath;
+    bookmark.source = this.source;
     bookmark.createdAt = this.createdAt;
     bookmark.updatedAt = this.updatedAt;
     bookmark.readState = this.readState;
