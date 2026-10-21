@@ -239,9 +239,49 @@ export class BookmarkDao {
     );
   }
 
-  async setRemoteEtag(id: string, etag: string): Promise<void> {
+  async setRemoteEtagIfUnchanged(
+    id: string,
+    etag: string,
+    expectedRev: number,
+    expectedUpdatedAt: number
+  ): Promise<boolean> {
     const store = Database.getStore();
-    await store.executeSql('UPDATE bookmark SET remote_etag = ?, dirty = 0 WHERE id = ?', [etag, id]);
+    const values: relationalStore.ValuesBucket = {
+      'remote_etag': etag,
+      'dirty': 0
+    };
+    const predicates = new relationalStore.RdbPredicates('bookmark');
+    predicates.equalTo('id', id);
+    predicates.and();
+    predicates.equalTo('rev', expectedRev);
+    predicates.and();
+    predicates.equalTo('updated_at', expectedUpdatedAt);
+    const rows = await store.update(values, predicates);
+    return rows > 0;
+  }
+
+  async insertConflict(bookmarkId: string, localJson: string, remoteJson: string, reason: string): Promise<void> {
+    const store = Database.getStore();
+    const values: relationalStore.ValuesBucket = {
+      'id': util.generateRandomUUID(true),
+      'bookmark_id': bookmarkId,
+      'local_json': localJson,
+      'remote_json': remoteJson,
+      'reason': reason,
+      'created_at': Date.now()
+    };
+    await store.insert('conflict', values);
+  }
+
+  async countConflicts(): Promise<number> {
+    const store = Database.getStore();
+    const resultSet = await store.querySql('SELECT COUNT(*) AS cnt FROM conflict', []);
+    let count = 0;
+    if (resultSet.goToFirstRow()) {
+      count = resultSet.getLong(0);
+    }
+    resultSet.close();
+    return count;
   }
 
   async setStarred(id: string, starred: boolean): Promise<void> {

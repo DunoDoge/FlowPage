@@ -3,6 +3,7 @@ import { Bookmark } from '../../model/Bookmark';
 import { Tombstone } from '../../model/Tombstone';
 import { FlowRepository } from '../../repository/FlowRepository';
 import { SyncConfigStore } from './SyncConfigStore';
+import { SyncAction, SyncPlanner } from './SyncPlanner';
 import { SyncRecord } from './SyncRecord';
 import { RemoteItem, WebDavTransport } from './WebDavTransport';
 
@@ -26,10 +27,12 @@ export class SyncEngine {
     remoteEtag: string,
     report: SyncReport
   ): Promise<void> {
+    const expectedRev = bookmark.rev;
+    const expectedUpdatedAt = bookmark.updatedAt;
     try {
       const json = SyncRecord.fromBookmark(bookmark).toJson();
       const etag = await transport.put(bookmark.id, json, remoteEtag);
-      await repo.setRemoteEtag(bookmark.id, etag);
+      await repo.setRemoteEtagIfUnchanged(bookmark.id, etag, expectedRev, expectedUpdatedAt);
       report.uploaded = report.uploaded + 1;
     } catch (error) {
       report.failed = report.failed + 1;
@@ -129,13 +132,12 @@ export class SyncEngine {
           continue;
         }
 
-        const remoteChanged = remote.etag.length > 0 && local.remoteEtag !== remote.etag;
-        if (local.dirty && !remoteChanged) {
+        const action = SyncPlanner.planForExisting(local.dirty, local.remoteEtag, remote.etag);
+        if (action === SyncAction.UPLOAD) {
           await SyncEngine.upload(transport, repo, local, remote.etag, report);
           continue;
         }
-
-        if (!remoteChanged) {
+        if (action === SyncAction.SKIP) {
           report.skipped = report.skipped + 1;
           continue;
         }
@@ -147,12 +149,30 @@ export class SyncEngine {
             continue;
           }
           const record = SyncRecord.parse(response.body);
-          if (record.updatedAt > local.updatedAt) {
+          const next = SyncPlanner.planAfterFetch(
+            local.dirty,
+            local.remoteEtag,
+            local.updatedAt,
+            record.updatedAt
+          );
+          if (next === SyncAction.DOWNLOAD) {
             const applied = await repo.upsertFromRemote(record, remote.etag);
             if (applied) {
               report.downloaded = report.downloaded + 1;
             } else {
               report.skipped = report.skipped + 1;
+            }
+          } else if (next === SyncAction.ADOPT_ETAG) {
+            const applied = await repo.setRemoteEtagIfUnchanged(
+              local.id,
+              remote.etag,
+              local.rev,
+              local.updatedAt
+            );
+            if (applied) {
+              report.skipped = report.skipped + 1;
+            } else {
+              await SyncEngine.upload(transport, repo, local, remote.etag, report);
             }
           } else {
             await SyncEngine.upload(transport, repo, local, remote.etag, report);
@@ -168,7 +188,7 @@ export class SyncEngine {
           continue;
         }
         const known = remoteMap.get(local.id);
-        if (!local.dirty && known !== undefined) {
+        if (SyncPlanner.planForLocalOnly(local.dirty, known !== undefined) === SyncAction.SKIP) {
           continue;
         }
         await SyncEngine.upload(transport, repo, local, known === undefined ? '' : known.etag, report);

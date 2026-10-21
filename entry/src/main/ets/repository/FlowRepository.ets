@@ -115,6 +115,14 @@ export class FlowRepository {
     bookmark.remoteEtag = etag;
     bookmark.dirty = false;
     if (existing !== undefined) {
+      if (existing.dirty) {
+        await this.dao.insertConflict(
+          existing.id,
+          SyncRecord.fromBookmark(existing).toJson(),
+          record.toJson(),
+          'lww-remote-wins'
+        );
+      }
       if (bookmark.linkStatus === 0 && existing.linkStatus !== 0) {
         bookmark.linkStatus = existing.linkStatus;
         bookmark.linkCheckedAt = existing.linkCheckedAt;
@@ -134,8 +142,13 @@ export class FlowRepository {
     await this.dao.setLinkStatus(id, status, Date.now());
   }
 
-  async setRemoteEtag(id: string, etag: string): Promise<void> {
-    await this.dao.setRemoteEtag(id, etag);
+  async setRemoteEtagIfUnchanged(
+    id: string,
+    etag: string,
+    expectedRev: number,
+    expectedUpdatedAt: number
+  ): Promise<boolean> {
+    return this.dao.setRemoteEtagIfUnchanged(id, etag, expectedRev, expectedUpdatedAt);
   }
 
   afterSync(): void {
