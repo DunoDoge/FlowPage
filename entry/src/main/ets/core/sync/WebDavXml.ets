@@ -1,4 +1,4 @@
-import { RemoteItem } from './RemoteItem';
+import { RemoteItem } from './WebDavTypes';
 
 export class WebDavXml {
   static decodeEntities(value: string): string {

@@ -2,7 +2,8 @@ import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
-import { RemoteItem } from './RemoteItem';
+import { RemoteItem, WebDavResponse } from './WebDavTypes';
+import { SyncTransport } from './SyncTransport';
 import { WebDavXml } from './WebDavXml';
 
 const PROPFIND_BODY: string =
@@ -16,13 +17,7 @@ export class WebDavConfig {
   credentialInvalid: boolean = false;
 }
 
-export class WebDavResponse {
-  status: number = 0;
-  body: string = '';
-  etag: string = '';
-}
-
-export class WebDavTransport {
+export class WebDavTransport implements SyncTransport {
   private config: WebDavConfig;
   private auth: string;
 
