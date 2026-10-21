@@ -151,6 +151,10 @@ export class FlowRepository {
     return this.dao.setRemoteEtagIfUnchanged(id, etag, expectedRev, expectedUpdatedAt);
   }
 
+  async clearRemoteEtags(): Promise<void> {
+    await this.dao.clearRemoteEtags();
+  }
+
   afterSync(): void {
     this.notify();
   }

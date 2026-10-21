@@ -73,7 +73,10 @@ export struct SyncPage {
     try {
       const context = getContext(this) as common.Context;
       const config = this.currentConfig();
-      await SyncConfigStore.save(context, config);
+      const serverChanged = await SyncConfigStore.save(context, config);
+      if (serverChanged) {
+        await FlowRepository.get().clearRemoteEtags();
+      }
       this.configured = true;
       this.credentialInvalid = false;
       const report: SyncReport = await SyncEngine.sync(context);

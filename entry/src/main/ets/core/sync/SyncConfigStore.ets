@@ -10,9 +10,37 @@ class StoredConfig {
   url: string = '';
   user: string = '';
   passwordEnc: string = '';
+  fingerprint: string = '';
 }
 
 export class SyncConfigStore {
+  static fingerprintOf(url: string, user: string): string {
+    let base = url.trim();
+    while (base.endsWith('/')) {
+      base = base.substring(0, base.length - 1);
+    }
+    return `${base}|${user.trim().toLowerCase()}`;
+  }
+
+  private static storedFingerprint(store: preferences.Preferences): string {
+    const raw = store.getSync('webdav_config', '');
+    if (typeof raw !== 'string' || raw.length === 0) {
+      return '';
+    }
+    try {
+      const parsed = JSON.parse(raw) as StoredConfig;
+      const stored = typeof parsed.fingerprint === 'string' ? parsed.fingerprint : '';
+      if (stored.length > 0) {
+        return stored;
+      }
+      const urlText = typeof parsed.url === 'string' ? parsed.url : '';
+      const userText = typeof parsed.user === 'string' ? parsed.user : '';
+      return urlText.length > 0 ? SyncConfigStore.fingerprintOf(urlText, userText) : '';
+    } catch (error) {
+      return '';
+    }
+  }
+
   static async load(context: common.Context): Promise<WebDavConfig | undefined> {
     try {
       const store = preferences.getPreferencesSync(context, { name: STORE_NAME });
@@ -64,19 +92,23 @@ export class SyncConfigStore {
     }
   }
 
-  static async save(context: common.Context, config: WebDavConfig): Promise<void> {
+  static async save(context: common.Context, config: WebDavConfig): Promise<boolean> {
     const store = preferences.getPreferencesSync(context, { name: STORE_NAME });
+    const previous = SyncConfigStore.storedFingerprint(store);
+    const fingerprint = SyncConfigStore.fingerprintOf(config.url, config.user);
     const encrypted = await CredentialCipher.encrypt(config.password);
     const payload = new StoredConfig();
     payload.url = config.url;
     payload.user = config.user;
     payload.passwordEnc = encrypted;
+    payload.fingerprint = fingerprint;
     store.putSync('webdav_config', JSON.stringify(payload));
     store.deleteSync('webdav_url');
     store.deleteSync('webdav_user');
     store.deleteSync('webdav_password_enc');
     store.deleteSync('webdav_password');
     await store.flush();
+    return previous.length === 0 || previous !== fingerprint;
   }
 
   static clear(context: common.Context): void {

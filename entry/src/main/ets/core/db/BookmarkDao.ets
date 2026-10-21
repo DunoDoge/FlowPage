@@ -260,6 +260,11 @@ export class BookmarkDao {
     return rows > 0;
   }
 
+  async clearRemoteEtags(): Promise<void> {
+    const store = Database.getStore();
+    await store.executeSql('UPDATE bookmark SET remote_etag = \'\'', []);
+  }
+
   async insertConflict(bookmarkId: string, localJson: string, remoteJson: string, reason: string): Promise<void> {
     const store = Database.getStore();
     const values: relationalStore.ValuesBucket = {
