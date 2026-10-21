@@ -34,27 +34,3 @@ export function formatFullDate(ts: number): string {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 }
 
-export function formatDateTime(ts: number): string {
-  if (ts <= 0) {
-    return '';
-  }
-  const date = new Date(ts);
-  return `${formatFullDate(ts)} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
-}
-
-export function greeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 6) {
-    return '夜深了';
-  }
-  if (hour < 11) {
-    return '早上好';
-  }
-  if (hour < 14) {
-    return '中午好';
-  }
-  if (hour < 18) {
-    return '下午好';
-  }
-  return '晚上好';
-}

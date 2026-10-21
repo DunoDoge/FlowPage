@@ -20,24 +20,20 @@ export class AppState {
   @Trace tagFilter: string = '';
   @Trace inboxUrl: string = '';
   @Trace showInbox: boolean = false;
-  @Trace sheetMode: number = 0;
-  @Trace editingId: string = '';
   private routePending: boolean = false;
 
   notifyChanged(): void {
     this.refreshTick = this.refreshTick + 1;
   }
 
-  openInbox(url: string, mode: number): void {
+  openInbox(url: string): void {
     this.inboxUrl = url;
-    this.sheetMode = mode;
     this.showInbox = true;
   }
 
   closeInbox(): void {
     this.showInbox = false;
     this.inboxUrl = '';
-    this.editingId = '';
   }
 
   select(id: string): void {

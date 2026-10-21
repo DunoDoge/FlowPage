@@ -42,9 +42,6 @@ export class SyncErrorText {
     if (message.startsWith('STATUS_')) {
       return `服务器返回 HTTP ${message.substring(7)}。`;
     }
-    if (message === 'UNKNOWN') {
-      return '同步失败，请稍后再试。';
-    }
     return `同步失败：${message}`;
   }
 

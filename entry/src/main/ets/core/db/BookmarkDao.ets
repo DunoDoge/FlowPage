@@ -209,28 +209,6 @@ export class BookmarkDao {
     return bookmark;
   }
 
-  async updateFields(
-    id: string,
-    title: string,
-    description: string,
-    siteName: string,
-    faviconUrl: string,
-    coverUrl: string,
-    snapshotPath: string,
-    snapshotStatus: number,
-    snapshotAt: number,
-    searchText: string
-  ): Promise<void> {
-    const store = Database.getStore();
-    await store.executeSql(
-      'UPDATE bookmark SET title = ?, description = ?, site_name = ?, favicon_url = ?, ' +
-      'cover_url = ?, snapshot_path = ?, snapshot_status = ?, snapshot_at = ?, ' +
-      'search_text = ?, updated_at = ?, rev = rev + 1, dirty = 1 WHERE id = ?',
-      [title, description, siteName, faviconUrl, coverUrl, snapshotPath,
-        snapshotStatus, snapshotAt, searchText, Date.now(), id]
-    );
-  }
-
   async setLinkStatus(id: string, status: number, checkedAt: number): Promise<void> {
     const store = Database.getStore();
     await store.executeSql(
@@ -446,7 +424,6 @@ export class BookmarkDao {
   }
 
   async purgeExpired(days: number): Promise<number> {
-    const store = Database.getStore();
     const cutoff = Date.now() - days * 86400000;
     const expired = await this.listTrashBefore(cutoff);
     for (let i = 0; i < expired.length; i++) {
@@ -521,17 +498,6 @@ export class BookmarkDao {
       );
     }
     await this.deleteTag(sourceId);
-  }
-
-  async count(): Promise<number> {
-    const store = Database.getStore();
-    const resultSet = await store.querySql('SELECT COUNT(*) AS cnt FROM bookmark WHERE deleted = 0', []);
-    let count = 0;
-    if (resultSet.goToFirstRow()) {
-      count = resultSet.getLong(0);
-    }
-    resultSet.close();
-    return count;
   }
 
   async clearAll(): Promise<void> {

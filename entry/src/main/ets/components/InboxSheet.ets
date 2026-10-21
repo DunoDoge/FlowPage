@@ -14,9 +14,6 @@ export struct InboxSheet {
 
   aboutToAppear(): void {
     this.urlText = this.appState.inboxUrl;
-    if (this.urlText.length > 0) {
-      this.titleText = '';
-    }
   }
 
   private parseTags(): string[] {

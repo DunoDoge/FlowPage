@@ -182,11 +182,10 @@ struct Index {
       Column() {
         StreamHome({
           isWide: true,
-          isLarge: this.isLarge,
           refreshKey: this.streamRefresh,
           onOpen: (id: string) => this.openDetail(id),
-          onCompose: () => this.appState.openInbox('', 0),
-          onComposeWithUrl: (url: string) => this.appState.openInbox(url, 0),
+          onCompose: () => this.appState.openInbox(''),
+          onComposeWithUrl: (url: string) => this.appState.openInbox(url),
           onOpenPane: (pane: string) => this.openPane(pane)
         })
       }
@@ -220,11 +219,10 @@ struct Index {
     Navigation(this.navStack) {
       StreamHome({
         isWide: false,
-        isLarge: false,
         refreshKey: this.streamRefresh,
         onOpen: (id: string) => this.openDetail(id),
-        onCompose: () => this.appState.openInbox('', 0),
-        onComposeWithUrl: (url: string) => this.appState.openInbox(url, 0),
+        onCompose: () => this.appState.openInbox(''),
+        onComposeWithUrl: (url: string) => this.appState.openInbox(url),
         onOpenPane: (pane: string) => this.openPane(pane)
       })
     }

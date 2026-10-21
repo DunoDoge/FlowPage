@@ -55,8 +55,4 @@ export class Bookmark {
     const tagPart = this.tags.join(' ');
     this.searchText = `${this.title} ${this.description} ${this.siteName} ${this.url} ${this.note} ${this.excerpt} ${tagPart}`.toLowerCase();
   }
-
-  isRead(): boolean {
-    return this.readState === ReadState.READ;
-  }
 }

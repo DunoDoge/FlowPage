@@ -25,7 +25,7 @@ export default class EntryAbility extends UIAbility {
       if (uri.startsWith('flowpage://bookmark/')) {
         AppState.shared.openBookmark(uri.substring('flowpage://bookmark/'.length));
       } else if (uri.startsWith('http://') || uri.startsWith('https://')) {
-        AppState.shared.openInbox(uri, 0);
+        AppState.shared.openInbox(uri);
       }
     }
   }

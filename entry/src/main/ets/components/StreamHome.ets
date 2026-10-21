@@ -23,7 +23,6 @@ const FILTERS: FilterOption[] = [
 @ComponentV2
 export struct StreamHome {
   @Param isWide: boolean = false;
-  @Param isLarge: boolean = false;
   @Param refreshKey: number = 0;
   @Event onOpen: (id: string) => void = (id: string) => {};
   @Event onCompose: () => void = () => {};

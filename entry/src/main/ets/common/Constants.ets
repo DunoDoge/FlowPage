@@ -1,39 +1,3 @@
-export class Space {
-  static readonly xxs: number = 4;
-  static readonly xs: number = 8;
-  static readonly sm: number = 12;
-  static readonly md: number = 16;
-  static readonly lg: number = 20;
-  static readonly xl: number = 24;
-  static readonly xxl: number = 32;
-  static readonly huge: number = 40;
-}
-
-export class Radius {
-  static readonly xs: number = 2;
-  static readonly sm: number = 6;
-  static readonly md: number = 10;
-  static readonly lg: number = 16;
-}
-
-export class FontSize {
-  static readonly display: number = 34;
-  static readonly title: number = 24;
-  static readonly headline: number = 17;
-  static readonly body: number = 15;
-  static readonly reading: number = 17;
-  static readonly caption: number = 12;
-  static readonly label: number = 12;
-}
-
-export class Breakpoint {
-  static readonly medium: number = 600;
-  static readonly large: number = 840;
-  static readonly rail: number = 72;
-  static readonly sideNav: number = 240;
-  static readonly list: number = 380;
-}
-
 export enum StreamFilter {
   ALL = 0,
   UNREAD = 1,
@@ -69,11 +33,6 @@ export enum Pane {
   TAGS = 'tags',
   SYNC = 'sync',
   SETTINGS = 'settings'
-}
-
-export enum SheetMode {
-  INBOX = 0,
-  EDIT = 1
 }
 
 export class Limits {

@@ -1,7 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { Bookmark } from '../model/Bookmark';
-import { ImportResult, ImportedBookmark } from '../model/ImportResult';
+import { ImportResult } from '../model/ImportResult';
 import { TagCount } from '../model/Tag';
 import { Tombstone } from '../model/Tombstone';
 import { BookmarkDao } from '../core/db/BookmarkDao';
@@ -12,7 +12,7 @@ import { BookmarkHtmlParser } from '../core/parser/BookmarkHtmlParser';
 import { SyncRecord } from '../core/sync/SyncRecord';
 import { AppState } from '../common/AppState';
 import { BookmarkSource, ReadState, SnapshotStatus } from '../common/Constants';
-import { domainOf, fallbackTitle, normalizeUrl } from '../common/UrlUtil';
+import { domainOf, normalizeUrl } from '../common/UrlUtil';
 
 export class SaveOutcome {
   bookmark: Bookmark = new Bookmark();
@@ -277,35 +277,8 @@ export class FlowRepository {
     this.notify();
   }
 
-  async refreshPending(): Promise<void> {
-    const all = await this.dao.listAll(false);
-    let count = 0;
-    for (let i = 0; i < all.length; i++) {
-      const item = all[i];
-      if (item.snapshotStatus === SnapshotStatus.PENDING && count < 10) {
-        await this.applyMetadata(item.id);
-        count = count + 1;
-      }
-    }
-  }
-
   async loadSnapshot(bookmark: Bookmark): Promise<string> {
     return SnapshotStore.read(bookmark.snapshotPath);
-  }
-
-  async saveSnapshot(id: string, text: string): Promise<void> {
-    const bookmark = await this.dao.findById(id);
-    if (bookmark === undefined) {
-      return;
-    }
-    const path = SnapshotStore.save(this.requireContext(), id, text);
-    bookmark.snapshotPath = path;
-    bookmark.snapshotStatus = SnapshotStatus.DONE;
-    bookmark.snapshotAt = Date.now();
-    bookmark.updatedAt = Date.now();
-    bookmark.rev = bookmark.rev + 1;
-    await this.dao.update(bookmark);
-    this.notify();
   }
 
   async setStarred(id: string, starred: boolean): Promise<void> {
