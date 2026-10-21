@@ -21,7 +21,27 @@ export function normalizeUrl(input: string): string {
   if (text.length === 0) {
     return '';
   }
-  const withScheme = hasScheme(text) ? text : `https://${text}`;
+  let withScheme = text;
+  // Reject explicit non-http schemes (mailto:, javascript:, data:, tel:) even when they
+  // lack the "//" that hasScheme() requires; otherwise they would be re-read as credentials.
+  const explicit = new RegExp('^([a-zA-Z][a-zA-Z0-9+.-]*):').exec(text);
+  if (explicit !== null) {
+    const scheme = explicit[1].toLowerCase();
+    if (scheme !== 'http' && scheme !== 'https') {
+      const bareHost = new RegExp(
+        '^(?:localhost|[^\\s:/?#]+\\.[^\\s:/?#]+)(?::\\d+)?(?:[/?#].*)?$',
+        'i'
+      ).test(text);
+      if (!bareHost) {
+        return '';
+      }
+      withScheme = `https://${text}`;
+    } else if (!hasScheme(text)) {
+      withScheme = `${scheme}://${text.substring(explicit[0].length)}`;
+    }
+  } else if (!hasScheme(text)) {
+    withScheme = `https://${text}`;
+  }
   try {
     const parsed = new url.URL(withScheme);
     const protocol = parsed.protocol.toLowerCase();
