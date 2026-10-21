@@ -10,6 +10,7 @@ export class SyncReport {
   downloaded: number = 0;
   skipped: number = 0;
   failed: number = 0;
+  firstFailure: string = '';
   message: string = '';
 }
 
@@ -20,15 +21,19 @@ export class SyncEngine {
     transport: WebDavTransport,
     repo: FlowRepository,
     bookmark: Bookmark,
+    remoteEtag: string,
     report: SyncReport
   ): Promise<void> {
     try {
       const json = SyncRecord.fromBookmark(bookmark).toJson();
-      const etag = await transport.put(bookmark.id, json, bookmark.remoteEtag);
+      const etag = await transport.put(bookmark.id, json, remoteEtag);
       await repo.setRemoteEtag(bookmark.id, etag);
       report.uploaded = report.uploaded + 1;
     } catch (error) {
       report.failed = report.failed + 1;
+      if (report.firstFailure.length === 0) {
+        report.firstFailure = error instanceof Error ? error.message : 'UNKNOWN';
+      }
     }
   }
 
@@ -89,7 +94,7 @@ export class SyncEngine {
 
         const remoteChanged = remote.etag.length > 0 && local.remoteEtag !== remote.etag;
         if (local.dirty && !remoteChanged) {
-          await SyncEngine.upload(transport, repo, local, report);
+          await SyncEngine.upload(transport, repo, local, remote.etag, report);
           continue;
         }
 
@@ -109,7 +114,7 @@ export class SyncEngine {
             await repo.upsertFromRemote(record, remote.etag);
             report.downloaded = report.downloaded + 1;
           } else {
-            await SyncEngine.upload(transport, repo, local, report);
+            await SyncEngine.upload(transport, repo, local, remote.etag, report);
           }
         } catch (error) {
           report.failed = report.failed + 1;
@@ -121,10 +126,11 @@ export class SyncEngine {
         if (handled.has(local.id)) {
           continue;
         }
-        if (!local.dirty && remoteMap.has(local.id)) {
+        const known = remoteMap.get(local.id);
+        if (!local.dirty && known !== undefined) {
           continue;
         }
-        await SyncEngine.upload(transport, repo, local, report);
+        await SyncEngine.upload(transport, repo, local, known === undefined ? '' : known.etag, report);
       }
 
       SyncConfigStore.setLastSync(context, Date.now());
@@ -132,6 +138,9 @@ export class SyncEngine {
       report.message = `上传 ${report.uploaded} · 下载 ${report.downloaded} · 跳过 ${report.skipped}`;
       if (report.failed > 0) {
         report.message += ` · 失败 ${report.failed}`;
+        if (report.firstFailure.length > 0) {
+          report.message += `（${report.firstFailure}）`;
+        }
       }
       return report;
     } finally {

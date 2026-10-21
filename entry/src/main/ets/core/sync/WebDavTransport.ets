@@ -225,8 +225,6 @@ export class WebDavTransport {
     };
     if (etag.length > 0) {
       headers['If-Match'] = etag;
-    } else {
-      headers['If-None-Match'] = '*';
     }
     const response = await this.request(
       'PUT',
@@ -235,6 +233,14 @@ export class WebDavTransport {
       headers
     );
     if (response.status !== 201 && response.status !== 200 && response.status !== 204) {
+      const detail = response.body.length > 0 ? response.body.substring(0, 240) : '';
+      hilog.error(
+        0x0000,
+        'flowpage',
+        'webdav PUT failed status=%{public}d body=%{public}s',
+        response.status,
+        detail
+      );
       throw new Error(`PUT_${response.status}`);
     }
     return response.etag;
