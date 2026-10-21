@@ -5,7 +5,7 @@ import { formatRelative } from '../common/DateUtil';
 import { WebDavConfig, WebDavTransport } from '../core/sync/WebDavTransport';
 import { SyncConfigStore } from '../core/sync/SyncConfigStore';
 import { SyncEngine, SyncReport } from '../core/sync/SyncEngine';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { SyncErrorText } from '../core/sync/SyncErrorText';
 
 @ComponentV2
 export struct SyncPage {
@@ -79,7 +79,11 @@ export struct SyncPage {
       const report: SyncReport = await SyncEngine.sync(context);
       this.status = report.message;
       this.lastSync = SyncConfigStore.lastSync(context);
-      AppState.shared.toast('同步完成');
+      if (report.failed > 0) {
+        AppState.shared.toast(`同步完成，但有 ${report.failed} 条失败`);
+      } else {
+        AppState.shared.toast('同步完成');
+      }
     } catch (error) {
       this.status = this.errorText(error);
     } finally {
@@ -96,55 +100,7 @@ export struct SyncPage {
   }
 
   private errorText(error: Object): string {
-    const businessError = error as BusinessError;
-    if (businessError.code !== undefined && businessError.code !== 0) {
-      if (businessError.code === 2300006 || businessError.code === 2300007) {
-        return '网络不可达，检查地址与网络。';
-      }
-      if (businessError.code === 2300028) {
-        return '连接超时，稍后再试。';
-      }
-      return `网络请求失败（${businessError.code}）。`;
-    }
-    if (error instanceof Error) {
-      const message = error.message;
-      if (message.startsWith('NET_')) {
-        const code = message.substring(4);
-        if (code === '2300006' || code === '2300007') {
-          return '网络不可达，检查地址与网络。';
-        }
-        if (code === '2300028') {
-          return '连接超时，稍后再试。';
-        }
-        return `网络请求失败（${code}）。`;
-      }
-      if (message === 'AUTH_401') {
-        return '账号或应用密码错误。坚果云请使用「应用密码」。';
-      }
-      if (message === 'AUTH_403') {
-        return '账号已通过，但没有该目录的权限（403）。';
-      }
-      if (message === 'NOT_FOUND') {
-        return '地址或目录不存在（404）。';
-      }
-      if (message === 'NO_CREDENTIAL') {
-        return '凭据无法解密，请重新输入应用密码。';
-      }
-      if (message === 'NO_CONFIG') {
-        return '还没有配置同步。';
-      }
-      if (message === 'BUSY') {
-        return '上一次同步还没结束。';
-      }
-      if (message === 'PARENT_MISSING') {
-        return '远端父目录不存在。';
-      }
-      if (message.startsWith('STATUS_')) {
-        return `服务器返回 HTTP ${message.substring(7)}。`;
-      }
-      return `没同步上：${message}`;
-    }
-    return '没同步上，稍后再试。';
+    return SyncErrorText.describeError(error);
   }
 
   private async testConnection(): Promise<void> {

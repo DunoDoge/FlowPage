@@ -3,6 +3,7 @@ import { Bookmark } from '../../model/Bookmark';
 import { Tombstone } from '../../model/Tombstone';
 import { FlowRepository } from '../../repository/FlowRepository';
 import { SyncConfigStore } from './SyncConfigStore';
+import { SyncErrorText } from './SyncErrorText';
 import { SyncAction, SyncPlanner } from './SyncPlanner';
 import { SyncRecord } from './SyncRecord';
 import { RemoteItem, WebDavTransport } from './WebDavTransport';
@@ -20,6 +21,13 @@ export class SyncReport {
 export class SyncEngine {
   private static running: boolean = false;
 
+  private static fail(report: SyncReport, error: Object): void {
+    report.failed = report.failed + 1;
+    if (report.firstFailure.length === 0) {
+      report.firstFailure = SyncErrorText.describeError(error);
+    }
+  }
+
   private static async upload(
     transport: WebDavTransport,
     repo: FlowRepository,
@@ -35,10 +43,7 @@ export class SyncEngine {
       await repo.setRemoteEtagIfUnchanged(bookmark.id, etag, expectedRev, expectedUpdatedAt);
       report.uploaded = report.uploaded + 1;
     } catch (error) {
-      report.failed = report.failed + 1;
-      if (report.firstFailure.length === 0) {
-        report.firstFailure = error instanceof Error ? error.message : 'UNKNOWN';
-      }
+      SyncEngine.fail(report, error);
     }
   }
 
@@ -53,12 +58,8 @@ export class SyncEngine {
       await repo.removeTombstone(tombstone.id);
       report.deleted = report.deleted + 1;
     } catch (error) {
-      report.failed = report.failed + 1;
-      const message = error instanceof Error ? error.message : 'UNKNOWN';
-      await repo.markTombstoneFailed(tombstone.id, message);
-      if (report.firstFailure.length === 0) {
-        report.firstFailure = message;
-      }
+      await repo.markTombstoneFailed(tombstone.id, SyncErrorText.describeError(error));
+      SyncEngine.fail(report, error);
     }
   }
 
@@ -124,10 +125,10 @@ export class SyncEngine {
                 report.skipped = report.skipped + 1;
               }
             } else {
-              report.failed = report.failed + 1;
+              SyncEngine.fail(report, new Error(`GET_${response.status}`));
             }
           } catch (error) {
-            report.failed = report.failed + 1;
+            SyncEngine.fail(report, error);
           }
           continue;
         }
@@ -145,7 +146,7 @@ export class SyncEngine {
         try {
           const response = await transport.get(remote.name);
           if (response.status !== 200) {
-            report.failed = report.failed + 1;
+            SyncEngine.fail(report, new Error(`GET_${response.status}`));
             continue;
           }
           const record = SyncRecord.parse(response.body);
@@ -178,7 +179,7 @@ export class SyncEngine {
             await SyncEngine.upload(transport, repo, local, remote.etag, report);
           }
         } catch (error) {
-          report.failed = report.failed + 1;
+          SyncEngine.fail(report, error);
         }
       }
 
