@@ -151,6 +151,7 @@ export class WebDavTransport implements SyncTransport {
     await this.ensureCollection('FlowPage');
     await this.ensureCollection('FlowPage/v1');
     await this.ensureCollection('FlowPage/v1/items');
+    await this.ensureCollection('FlowPage/v1/tombstones');
   }
 
   async listItems(): Promise<RemoteItem[]> {
@@ -171,6 +172,46 @@ export class WebDavTransport implements SyncTransport {
       throw new Error(`PROPFIND_${response.status}`);
     }
     return WebDavXml.parseItems(response.body);
+  }
+
+  async listTombstones(): Promise<string[]> {
+    const response = await this.request('PROPFIND', 'FlowPage/v1/tombstones/', PROPFIND_BODY, {
+      'Depth': '1',
+      'Content-Type': 'application/xml; charset=utf-8'
+    });
+    if (response.status === 404) {
+      return [];
+    }
+    if (response.status === 401) {
+      throw new Error('AUTH_401');
+    }
+    if (response.status === 403) {
+      throw new Error('AUTH_403');
+    }
+    if (response.status !== 207 && response.status !== 200) {
+      throw new Error(`PROPFIND_${response.status}`);
+    }
+    const items = WebDavXml.parseItems(response.body);
+    const ids: string[] = [];
+    for (let i = 0; i < items.length; i++) {
+      ids.push(items[i].name);
+    }
+    return ids;
+  }
+
+  async putTombstone(id: string): Promise<void> {
+    const body = `{"schema":1,"id":${JSON.stringify(id)},"purgedAt":${Date.now()}}`;
+    const response = await this.request(
+      'PUT',
+      `FlowPage/v1/tombstones/${encodeURIComponent(id)}.json`,
+      body,
+      {
+        'Content-Type': 'application/json; charset=utf-8'
+      }
+    );
+    if (response.status !== 201 && response.status !== 200 && response.status !== 204) {
+      throw new Error(`PUT_${response.status}`);
+    }
   }
 
   async get(name: string): Promise<WebDavResponse> {

@@ -18,6 +18,7 @@ class StoredFile {
 
 class FakeTransport implements SyncTransport {
   files: Map<string, StoredFile> = new Map<string, StoredFile>();
+  tombstones: Set<string> = new Set<string>();
   failDelete: boolean = false;
   private seq: number = 0;
 
@@ -42,6 +43,18 @@ class FakeTransport implements SyncTransport {
       items.push(item);
     });
     return items;
+  }
+
+  async listTombstones(): Promise<string[]> {
+    const ids: string[] = [];
+    this.tombstones.forEach((id: string) => {
+      ids.push(id);
+    });
+    return ids;
+  }
+
+  async putTombstone(id: string): Promise<void> {
+    this.tombstones.add(id);
   }
 
   async get(name: string): Promise<WebDavResponse> {
@@ -170,6 +183,7 @@ export default function syncEngineTest() {
       expect(report.deleted).assertEqual(1);
       expect(report.failed).assertEqual(0);
       expect(transport.files.size).assertEqual(0);
+      expect(transport.tombstones.has(bookmark.id)).assertTrue();
       expect((await dao.findTombstone(bookmark.id)) === undefined).assertTrue();
       expect((await dao.findById(bookmark.id)) === undefined).assertTrue();
     });
@@ -190,6 +204,7 @@ export default function syncEngineTest() {
       expect(report.deleted).assertEqual(0);
       expect(report.failed).assertEqual(1);
       expect(report.firstFailure).assertContain('403');
+      expect(transport.tombstones.has(bookmark.id)).assertTrue();
       const tombstone = await dao.findTombstone(bookmark.id);
       expect(tombstone === undefined).assertFalse();
       if (tombstone !== undefined) {
@@ -218,6 +233,49 @@ export default function syncEngineTest() {
       const report = await SyncEngine.run(transport, context);
       expect(report.downloaded).assertEqual(0);
       expect((await dao.findById(bookmark.id)) === undefined).assertTrue();
+    });
+
+    it('purgesLocalWhenRemoteTombstoneArrives', 0, async () => {
+      if (context === undefined) {
+        expect(context === undefined).assertFalse();
+        return;
+      }
+      const dao = new BookmarkDao();
+      const bookmark = Bookmark.create('https://example.com/engine-peer-purge', '对端删除', BookmarkSource.MANUAL);
+      await dao.insert(bookmark);
+      await dao.setRemoteEtagIfUnchanged(bookmark.id, '"r1"', bookmark.rev, bookmark.updatedAt);
+      const transport = new FakeTransport();
+      transport.seed(bookmark.id, remoteRecord(
+        bookmark.id,
+        bookmark.url,
+        bookmark.title,
+        bookmark.updatedAt
+      ).toJson(), '"r1"');
+      transport.tombstones.add(bookmark.id);
+      const report: SyncReport = await SyncEngine.run(transport, context);
+      expect(report.failed).assertEqual(0);
+      expect(report.downloaded).assertEqual(0);
+      expect(report.uploaded).assertEqual(0);
+      expect((await dao.findById(bookmark.id)) === undefined).assertTrue();
+      expect(transport.files.size).assertEqual(0);
+    });
+
+    it('neverReuploadsWhenRemoteFileIsGoneButTombstoneExists', 0, async () => {
+      if (context === undefined) {
+        expect(context === undefined).assertFalse();
+        return;
+      }
+      const dao = new BookmarkDao();
+      const bookmark = Bookmark.create('https://example.com/engine-peer-gone', '远端已删', BookmarkSource.MANUAL);
+      await dao.insert(bookmark);
+      await dao.setRemoteEtagIfUnchanged(bookmark.id, '"r1"', bookmark.rev, bookmark.updatedAt);
+      const transport = new FakeTransport();
+      transport.tombstones.add(bookmark.id);
+      const report: SyncReport = await SyncEngine.run(transport, context);
+      expect(report.uploaded).assertEqual(0);
+      expect(report.downloaded).assertEqual(0);
+      expect((await dao.findById(bookmark.id)) === undefined).assertTrue();
+      expect(transport.files.size).assertEqual(0);
     });
 
     it('reuploadsWhenRemoteFileWasRemovedExternally', 0, async () => {

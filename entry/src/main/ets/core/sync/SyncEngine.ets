@@ -49,22 +49,6 @@ export class SyncEngine {
     }
   }
 
-  private static async deleteRemote(
-    transport: SyncTransport,
-    repo: FlowRepository,
-    tombstone: Tombstone,
-    report: SyncReport
-  ): Promise<void> {
-    try {
-      await transport.remove(tombstone.remoteName());
-      await repo.removeTombstone(tombstone.id);
-      report.deleted = report.deleted + 1;
-    } catch (error) {
-      await repo.markTombstoneFailed(tombstone.id, SyncErrorText.describeError(error));
-      SyncEngine.fail(report, error);
-    }
-  }
-
   static async sync(context: common.Context): Promise<SyncReport> {
     if (SyncEngine.running) {
       throw new Error('BUSY');
@@ -90,6 +74,11 @@ export class SyncEngine {
     await transport.test();
     await transport.ensureBase();
     const remoteItems = await transport.listItems();
+    const remoteTombstoneIds = await transport.listTombstones();
+    const remoteTombstoneSet = new Set<string>();
+    for (let i = 0; i < remoteTombstoneIds.length; i++) {
+      remoteTombstoneSet.add(remoteTombstoneIds[i]);
+    }
     const remoteMap = new Map<string, RemoteItem>();
     for (let i = 0; i < remoteItems.length; i++) {
       remoteMap.set(remoteItems[i].name, remoteItems[i]);
@@ -103,11 +92,35 @@ export class SyncEngine {
     }
     const tombstones = await repo.listTombstones();
     const tombstoneMap = new Map<string, Tombstone>();
+    const localTombstoneSet = new Set<string>();
     for (let i = 0; i < tombstones.length; i++) {
       tombstoneMap.set(tombstones[i].remoteName(), tombstones[i]);
       tombstoneMap.set(tombstones[i].id, tombstones[i]);
+      localTombstoneSet.add(tombstones[i].remoteName());
+      localTombstoneSet.add(tombstones[i].id);
     }
     const handled = new Set<string>();
+
+    for (let i = 0; i < remoteTombstoneIds.length; i++) {
+      const id = remoteTombstoneIds[i];
+      if (id.length === 0) {
+        continue;
+      }
+      handled.add(id);
+      if (localMap.get(id) !== undefined) {
+        await repo.purgeFromRemote(id);
+      } else if (tombstoneMap.get(id) !== undefined) {
+        await repo.removeTombstone(id);
+      }
+      if (remoteMap.get(id) !== undefined) {
+        try {
+          await transport.remove(id);
+          report.deleted = report.deleted + 1;
+        } catch (error) {
+          SyncEngine.fail(report, error);
+        }
+      }
+    }
 
     for (let i = 0; i < remoteItems.length; i++) {
       const remote = remoteItems[i];
@@ -115,9 +128,7 @@ export class SyncEngine {
         continue;
       }
       handled.add(remote.name);
-      const tombstone = tombstoneMap.get(remote.name);
-      if (tombstone !== undefined) {
-        await SyncEngine.deleteRemote(transport, repo, tombstone, report);
+      if (remoteTombstoneSet.has(remote.name) || localTombstoneSet.has(remote.name)) {
         continue;
       }
       const local = localMap.get(remote.name);
@@ -194,7 +205,7 @@ export class SyncEngine {
 
     for (let i = 0; i < localAll.length; i++) {
       const local = localAll[i];
-      if (handled.has(local.id) || tombstoneMap.get(local.id) !== undefined) {
+      if (handled.has(local.id) || localTombstoneSet.has(local.id)) {
         continue;
       }
       const known = remoteMap.get(local.id);
@@ -206,8 +217,26 @@ export class SyncEngine {
 
     for (let i = 0; i < tombstones.length; i++) {
       const tombstone = tombstones[i];
-      if (handled.has(tombstone.remoteName())) {
+      const id = tombstone.remoteName();
+      if (remoteTombstoneSet.has(id)) {
         continue;
+      }
+      try {
+        await transport.putTombstone(id);
+      } catch (error) {
+        await repo.markTombstoneFailed(tombstone.id, SyncErrorText.describeError(error));
+        SyncEngine.fail(report, error);
+        continue;
+      }
+      if (remoteMap.get(id) !== undefined) {
+        try {
+          await transport.remove(id);
+          report.deleted = report.deleted + 1;
+        } catch (error) {
+          await repo.markTombstoneFailed(tombstone.id, SyncErrorText.describeError(error));
+          SyncEngine.fail(report, error);
+          continue;
+        }
       }
       await repo.removeTombstone(tombstone.id);
     }

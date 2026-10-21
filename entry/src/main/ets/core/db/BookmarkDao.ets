@@ -382,8 +382,12 @@ export class BookmarkDao {
   }
 
   async purge(id: string): Promise<void> {
-    const store = Database.getStore();
     await this.addTombstone(id, id);
+    await this.purgeLocal(id);
+  }
+
+  async purgeLocal(id: string): Promise<void> {
+    const store = Database.getStore();
     await store.executeSql('DELETE FROM bookmark_tag WHERE bookmark_id = ?', [id]);
     await store.executeSql('DELETE FROM bookmark WHERE id = ?', [id]);
   }

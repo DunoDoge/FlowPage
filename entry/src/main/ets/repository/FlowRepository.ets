@@ -378,6 +378,15 @@ export class FlowRepository {
     return count;
   }
 
+  async purgeFromRemote(id: string): Promise<void> {
+    const bookmark = await this.dao.findById(id);
+    if (bookmark !== undefined) {
+      SnapshotStore.remove(bookmark.snapshotPath);
+      await this.dao.purgeLocal(id);
+    }
+    await this.dao.removeTombstone(id);
+  }
+
   async listTombstones(): Promise<Tombstone[]> {
     return this.dao.listTombstones();
   }
