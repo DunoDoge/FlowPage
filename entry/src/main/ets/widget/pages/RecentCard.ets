@@ -1,35 +1,17 @@
-class RecentItem {
-  title: string = '';
-  domain: string = '';
-  id: string = '';
-}
+import { CardLine, parseCardLines } from '../../common/CardFormat';
 
 @Entry
 @Component
 struct RecentCard {
   @LocalStorageProp('recent_lines') @Watch('onLinesChanged') recentLines: string = '';
-  @State items: RecentItem[] = [];
+  @State items: CardLine[] = [];
 
   aboutToAppear(): void {
     this.onLinesChanged();
   }
 
   onLinesChanged(): void {
-    const next: RecentItem[] = [];
-    if (this.recentLines.length > 0) {
-      const lines = this.recentLines.split('\n');
-      for (let i = 0; i < lines.length; i++) {
-        const parts = lines[i].split('|');
-        if (parts.length >= 3) {
-          const item = new RecentItem();
-          item.title = parts[0];
-          item.domain = parts[1];
-          item.id = parts[2];
-          next.push(item);
-        }
-      }
-    }
-    this.items = next;
+    this.items = parseCardLines(this.recentLines);
   }
 
   private open(id: string): void {
@@ -73,7 +55,7 @@ struct RecentCard {
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
       } else {
-        ForEach(this.items, (item: RecentItem) => {
+        ForEach(this.items, (item: CardLine) => {
           Column() {
             Text(item.title)
               .fontSize(13)
@@ -93,7 +75,7 @@ struct RecentCard {
           .justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Start)
           .onClick(() => this.open(item.id))
-        }, (item: RecentItem) => item.id)
+        }, (item: CardLine) => item.id)
       }
     }
     .width('100%')

@@ -52,6 +52,8 @@ export struct SideNav {
         .width('100%')
         .height(44)
         .alignItems(VerticalAlign.Center)
+        .accessibilityText(`打开${item.label}`)
+        .focusable(true)
         .onClick(() => this.onSelect(item.pane))
       }, (item: NavItem) => item.pane)
 

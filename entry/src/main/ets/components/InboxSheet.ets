@@ -91,6 +91,9 @@ export struct InboxSheet {
           Text('关闭')
             .fontSize(13)
             .fontColor($r('app.color.ink_secondary'))
+            .height(44)
+            .padding({ left: 10 })
+            .accessibilityText('关闭收笺面板')
             .onClick(() => this.appState.closeInbox())
         }
         .width('100%')

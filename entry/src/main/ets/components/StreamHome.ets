@@ -1,8 +1,8 @@
 import { pasteboard } from '@kit.BasicServicesKit';
 import { Bookmark } from '../model/Bookmark';
-import { TagCount } from '../model/Tag';
+import { BookmarkQuery, BookmarkSort } from '../model/BookmarkQuery';
 import { AppState } from '../common/AppState';
-import { ReadState, StreamFilter } from '../common/Constants';
+import { StreamFilter } from '../common/Constants';
 import { extractFirstUrl } from '../common/UrlUtil';
 import { LibrarySummary, FlowRepository } from '../repository/FlowRepository';
 import { BookmarkRow } from './BookmarkRow';
@@ -20,6 +20,8 @@ const FILTERS: FilterOption[] = [
   { label: '回收站', value: StreamFilter.TRASH }
 ];
 
+const PAGE_SIZE: number = 50;
+
 @ComponentV2
 export struct StreamHome {
   @Param isWide: boolean = false;
@@ -30,14 +32,18 @@ export struct StreamHome {
   @Event onOpenPane: (pane: string) => void = (pane: string) => {};
 
   @Local appState: AppState = AppState.shared;
-  @Local all: Bookmark[] = [];
   @Local filtered: Bookmark[] = [];
   @Local summary: LibrarySummary = new LibrarySummary();
-  @Local tags: TagCount[] = [];
   @Local keyword: string = '';
   @Local filter: number = StreamFilter.ALL;
+  @Local sort: number = BookmarkSort.CREATED_DESC;
   @Local loading: boolean = true;
+  @Local hasMore: boolean = false;
+  @Local loadingMore: boolean = false;
+  @Local todayCount: number = 0;
+  @Local focusIndex: number = 0;
   private searchTimer: number = -1;
+  private loadGeneration: number = 0;
 
   aboutToAppear(): void {
     this.load();
@@ -56,7 +62,7 @@ export struct StreamHome {
 
   @Monitor('appState.tagFilter')
   onTagFilterChanged(): void {
-    this.applyFilter();
+    this.load();
   }
 
   @Monitor('refreshKey')
@@ -64,57 +70,74 @@ export struct StreamHome {
     this.load();
   }
 
+  private currentQuery(): BookmarkQuery {
+    const query = new BookmarkQuery();
+    query.filter = this.filter;
+    query.tag = this.appState.tagFilter;
+    query.keyword = this.keyword;
+    query.sort = this.sort;
+    return query;
+  }
+
   private async load(): Promise<void> {
+    this.loadGeneration = this.loadGeneration + 1;
+    const generation = this.loadGeneration;
     const repo = FlowRepository.get();
+    this.loading = true;
     try {
-      this.all = await repo.listAll(true);
-      this.tags = await repo.listTags();
-      this.summary = await repo.summary();
-      this.applyFilter();
+      const page = await repo.queryPage(this.currentQuery(), 0, PAGE_SIZE);
+      if (generation !== this.loadGeneration) {
+        return;
+      }
+      this.filtered = page.items;
+      this.hasMore = page.hasMore;
+      this.focusIndex = 0;
+      const summary = await repo.summary();
+      if (generation !== this.loadGeneration) {
+        return;
+      }
+      this.summary = summary;
+      const todayCount = await repo.countToday();
+      if (generation !== this.loadGeneration) {
+        return;
+      }
+      this.todayCount = todayCount;
     } catch (error) {
-      AppState.shared.toast('没有读到本地数据');
+      if (generation === this.loadGeneration) {
+        AppState.shared.toast('没有读到本地数据');
+      }
     } finally {
-      this.loading = false;
+      if (generation === this.loadGeneration) {
+        this.loading = false;
+      }
     }
   }
 
-  private applyFilter(): void {
-    const keyword = this.keyword.trim().toLowerCase();
-    const tag = this.appState.tagFilter;
-    const next: Bookmark[] = [];
-    for (let i = 0; i < this.all.length; i++) {
-      const item = this.all[i];
-      if (this.filter === StreamFilter.TRASH) {
-        if (!item.deleted) {
-          continue;
-        }
-      } else {
-        if (item.deleted) {
-          continue;
-        }
-        if (this.filter === StreamFilter.ARCHIVED) {
-          if (!item.archived) {
-            continue;
-          }
-        } else if (item.archived) {
-          continue;
-        }
-        if (this.filter === StreamFilter.UNREAD && item.readState !== ReadState.UNREAD) {
-          continue;
-        }
-        if (this.filter === StreamFilter.STARRED && !item.starred) {
-          continue;
-        }
-      }
-      if (tag.length > 0 && item.tags.indexOf(tag) < 0) {
-        continue;
-      }
-      if (keyword.length > 0 && item.searchText.indexOf(keyword) < 0) {
-        continue;
-      }
-      next.push(item);
+  private async loadMore(): Promise<void> {
+    if (!this.hasMore || this.loadingMore || this.loading) {
+      return;
     }
-    this.filtered = next;
+    this.loadingMore = true;
+    const generation = this.loadGeneration;
+    const base = this.filtered;
+    try {
+      const page = await FlowRepository.get().queryPage(this.currentQuery(), base.length, PAGE_SIZE);
+      if (generation !== this.loadGeneration || this.filtered !== base) {
+        return;
+      }
+      const next = this.filtered.slice();
+      for (let i = 0; i < page.items.length; i++) {
+        next.push(page.items[i]);
+      }
+      this.filtered = next;
+      this.hasMore = page.hasMore;
+    } catch (error) {
+      if (generation === this.loadGeneration) {
+        AppState.shared.toast('没有读到更多数据');
+      }
+    } finally {
+      this.loadingMore = false;
+    }
   }
 
   private onKeywordChange(value: string): void {
@@ -123,33 +146,43 @@ export struct StreamHome {
       clearTimeout(this.searchTimer);
     }
     this.searchTimer = setTimeout(() => {
-      this.applyFilter();
+      this.load();
     }, 120);
   }
 
   private selectFilter(value: number): void {
     this.filter = value;
-    this.applyFilter();
+    this.load();
   }
 
-  private todayCount(): number {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    const startTime = start.getTime();
-    let count = 0;
-    for (let i = 0; i < this.all.length; i++) {
-      if (!this.all[i].deleted && this.all[i].createdAt >= startTime) {
-        count = count + 1;
-      }
+  private selectSort(value: number): void {
+    this.sort = value;
+    this.load();
+  }
+
+  private moveFocus(delta: number): void {
+    if (this.filtered.length === 0) {
+      return;
     }
-    return count;
+    let next = this.focusIndex + delta;
+    if (next < 0) {
+      next = 0;
+    }
+    if (next >= this.filtered.length) {
+      next = this.filtered.length - 1;
+    }
+    this.focusIndex = next;
+    focusControl.requestFocus(`bookmark-row-${this.filtered[next].id}`);
+    if (next >= this.filtered.length - 5 && this.hasMore) {
+      this.loadMore();
+    }
   }
 
   private subtitle(): string {
     if (this.loading) {
       return '正在翻开…';
     }
-    return `${this.summary.total} 条 · 今天收下 ${this.todayCount()} 条`;
+    return `${this.summary.total} 条 · 今天收下 ${this.todayCount} 条`;
   }
 
   private async readClipboard(): Promise<void> {
@@ -174,21 +207,27 @@ export struct StreamHome {
         Text('标签')
           .fontSize(12)
           .fontColor($r('app.color.ink_secondary'))
-          .padding({ left: 8, right: 8, top: 6, bottom: 6 })
+          .height(44)
+          .padding({ left: 8, right: 8 })
+          .accessibilityText('打开标签页')
           .onClick(() => this.onOpenPane('tags'))
         Text('同步')
           .fontSize(12)
           .fontColor($r('app.color.ink_secondary'))
-          .padding({ left: 8, right: 8, top: 6, bottom: 6 })
+          .height(44)
+          .padding({ left: 8, right: 8 })
+          .accessibilityText('打开同步页')
           .onClick(() => this.onOpenPane('sync'))
         Text('设置')
           .fontSize(12)
           .fontColor($r('app.color.ink_secondary'))
-          .padding({ left: 8, right: 8, top: 6, bottom: 6 })
+          .height(44)
+          .padding({ left: 8, right: 8 })
+          .accessibilityText('打开设置页')
           .onClick(() => this.onOpenPane('settings'))
       }
       .width('100%')
-      .padding({ left: 20, right: 12, top: 12 })
+      .padding({ left: 20, right: 12 })
 
       Row() {
         Column({ space: 4 }) {
@@ -208,7 +247,10 @@ export struct StreamHome {
           .fontColor($r('app.color.inverse_ink'))
           .backgroundColor($r('app.color.ink'))
           .borderRadius(6)
-          .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+          .height(44)
+          .padding({ left: 14, right: 14 })
+          .textAlign(TextAlign.Center)
+          .accessibilityText('收一笺')
           .onClick(() => this.onCompose())
       }
       .width('100%')
@@ -224,6 +266,7 @@ export struct StreamHome {
           .borderRadius(6)
           .height(44)
           .layoutWeight(1)
+          .accessibilityText('搜索')
           .onChange((value: string) => this.onKeywordChange(value))
         PasteButton({ text: PasteDescription.PASTE })
           .fontSize(14)
@@ -255,7 +298,10 @@ export struct StreamHome {
                 color: this.filter === option.value ? $r('app.color.ink') : $r('app.color.line_strong')
               })
               .borderRadius(999)
-              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+              .height(44)
+              .padding({ left: 12, right: 12 })
+              .textAlign(TextAlign.Center)
+              .accessibilityText(`筛选：${option.label}`)
               .onClick(() => this.selectFilter(option.value))
           }, (option: FilterOption) => `${option.value}`)
         }
@@ -265,7 +311,30 @@ export struct StreamHome {
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.None)
       .width('100%')
-      .margin({ top: 12 })
+      .margin({ top: 8 })
+
+      Row({ space: 12 }) {
+        Text('排序')
+          .fontSize(11)
+          .fontColor($r('app.color.ink_tertiary'))
+        Text('最新')
+          .fontSize(12)
+          .fontColor(this.sort === BookmarkSort.CREATED_DESC ? $r('app.color.ink') : $r('app.color.ink_tertiary'))
+          .height(44)
+          .padding({ left: 6, right: 6 })
+          .accessibilityText('按创建时间排序')
+          .onClick(() => this.selectSort(BookmarkSort.CREATED_DESC))
+        Text('域名')
+          .fontSize(12)
+          .fontColor(this.sort === BookmarkSort.DOMAIN_ASC ? $r('app.color.ink') : $r('app.color.ink_tertiary'))
+          .height(44)
+          .padding({ left: 6, right: 6 })
+          .accessibilityText('按域名排序')
+          .onClick(() => this.selectSort(BookmarkSort.DOMAIN_ASC))
+      }
+      .width('100%')
+      .padding({ left: 20, right: 20 })
+      .alignItems(VerticalAlign.Center)
 
       if (this.appState.tagFilter.length > 0) {
         Row({ space: 6 }) {
@@ -275,11 +344,15 @@ export struct StreamHome {
           Text('×')
             .fontSize(14)
             .fontColor($r('app.color.ink_secondary'))
+            .height(44)
+            .width(44)
+            .textAlign(TextAlign.Center)
+            .accessibilityText('清除标签筛选')
             .onClick(() => {
               this.appState.tagFilter = '';
             })
         }
-        .padding({ left: 20, right: 20, top: 10 })
+        .padding({ left: 20, right: 20 })
       }
 
       if (this.loading) {
@@ -288,17 +361,21 @@ export struct StreamHome {
         this.EmptyView()
       } else {
         List({ space: 0 }) {
-          ForEach(this.filtered, (item: Bookmark) => {
+          ForEach(this.filtered, (item: Bookmark, index: number) => {
             ListItem() {
               Column() {
                 BookmarkRow({
                   bookmark: item,
+                  index: index,
+                  keyword: this.keyword,
                   selected: this.isWide && item.id === this.appState.selectedId,
                   onOpen: (id: string) => this.onOpen(id),
                   onToggleStar: (id: string, starred: boolean) => {
-                    FlowRepository.get().setStarred(id, starred).then(() => {
-                      this.load();
-                    });
+                    FlowRepository.get().setStarred(id, starred);
+                  },
+                  onMoveFocus: (delta: number) => this.moveFocus(delta),
+                  onFocused: (focused: number) => {
+                    this.focusIndex = focused;
                   }
                 })
                 Divider()
@@ -313,6 +390,9 @@ export struct StreamHome {
         .layoutWeight(1)
         .edgeEffect(EdgeEffect.None)
         .scrollBar(BarState.Off)
+        .onReachEnd(() => {
+          this.loadMore();
+        })
       }
     }
     .width('100%')
@@ -362,14 +442,20 @@ export struct StreamHome {
             .fontColor($r('app.color.inverse_ink'))
             .backgroundColor($r('app.color.ink'))
             .borderRadius(6)
-            .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+            .height(44)
+            .padding({ left: 14, right: 14 })
+            .textAlign(TextAlign.Center)
+            .accessibilityText('收第一笺')
             .onClick(() => this.onCompose())
           Text('导入书签')
             .fontSize(13)
             .fontColor($r('app.color.ink'))
             .border({ width: 1, color: $r('app.color.line_strong') })
             .borderRadius(6)
-            .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+            .height(44)
+            .padding({ left: 14, right: 14 })
+            .textAlign(TextAlign.Center)
+            .accessibilityText('导入书签')
             .onClick(() => this.onOpenPane('settings'))
         }
         .margin({ top: 8 })

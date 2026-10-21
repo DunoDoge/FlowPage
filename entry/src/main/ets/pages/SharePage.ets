@@ -76,6 +76,9 @@ struct SharePage {
         Text('取消')
           .fontSize(13)
           .fontColor($r('app.color.ink_secondary'))
+          .height(44)
+          .padding({ left: 10 })
+          .accessibilityText('取消分享')
           .onClick(() => this.close())
       }
       .width('100%')
@@ -86,7 +89,7 @@ struct SharePage {
         .placeholderColor($r('app.color.ink_tertiary'))
         .backgroundColor($r('app.color.surface_alt'))
         .borderRadius(6)
-        .height(42)
+        .height(44)
         .onChange((value: string) => {
           this.urlText = value;
         })
@@ -104,7 +107,7 @@ struct SharePage {
         .placeholderColor($r('app.color.ink_tertiary'))
         .backgroundColor($r('app.color.surface_alt'))
         .borderRadius(6)
-        .height(42)
+        .height(44)
         .onChange((value: string) => {
           this.titleText = value;
         })
@@ -115,7 +118,7 @@ struct SharePage {
         .placeholderColor($r('app.color.ink_tertiary'))
         .backgroundColor($r('app.color.surface_alt'))
         .borderRadius(6)
-        .height(42)
+        .height(44)
         .onChange((value: string) => {
           this.tagsText = value;
         })

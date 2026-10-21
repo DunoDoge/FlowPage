@@ -22,11 +22,11 @@
     },
     {
       "name": "ink_secondary",
-      "value": "#6E6C66"
+      "value": "#5A5852"
     },
     {
       "name": "ink_tertiary",
-      "value": "#A3A09A"
+      "value": "#6B6963"
     },
     {
       "name": "line",
@@ -47,6 +47,10 @@
     {
       "name": "overlay",
       "value": "#52121211"
+    },
+    {
+      "name": "highlight",
+      "value": "#F3E3B5"
     }
   ]
 }
