@@ -2,6 +2,7 @@ import { http } from '@kit.NetworkKit';
 import { util, url } from '@kit.ArkTS';
 import { Limits } from '../../common/Constants';
 import { MetadataResult } from '../../model/MetadataResult';
+import { ArticleExtractor } from '../parser/ArticleExtractor';
 
 export class MetadataService {
   private static decodeEntities(input: string): string {
@@ -187,12 +188,15 @@ export class MetadataService {
       if (result.faviconUrl.length === 0) {
         result.faviconUrl = MetadataService.resolve(targetUrl, '/favicon.ico');
       }
-      const bodyText = MetadataService.stripTags(html);
-      result.snapshotText = includeSnapshot && bodyText.length > 0
-        ? (bodyText.length > Limits.snapshotBytes
-          ? bodyText.substring(0, Limits.snapshotBytes)
-          : bodyText)
-        : '';
+      let bodyText = '';
+      if (includeSnapshot) {
+        const article = ArticleExtractor.extract(html, result.title);
+        article.truncate(Limits.snapshotBytes);
+        result.article = article;
+        bodyText = article.plainText();
+      } else {
+        bodyText = MetadataService.stripTags(html);
+      }
       if (result.description.length === 0 && bodyText.length > 0) {
         result.description = bodyText.substring(0, 160);
       }

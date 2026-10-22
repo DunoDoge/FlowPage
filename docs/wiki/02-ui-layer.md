@@ -38,19 +38,25 @@
 [BookmarkRow.ets](../../entry/src/main/ets/components/BookmarkRow.ets)：未读左侧竖线、两行标题、一行摘要、域名 ·
 相对时间、最多两个标签；右侧星标按钮 32vp 视觉宽度、44×44vp 热区。
 
-## 3. 详情页
+## 3. 详情页与阅读模式
 
 [DetailContent.ets](../../entry/src/main/ets/components/DetailContent.ets) 同时用于手机（`compact=true`）和
 宽屏右侧（`compact=false`），内容最大宽度 680vp。
 
 - 打开时按 `bookmarkId` 读取；若是未读且未删除，自动 `setRead(READING)`，停留 30 秒后转 `READ`。
-- 三个页签：正文（纯文本快照）、摘录、备注。正文快照在 `snapshotStatus === DONE` 时才读取。
-- 阅读字号 15–21fp，`A−/A+` 每次 2fp，行高 = 字号 + 13，写入 `flowpage_settings.reading_size`。
+- 三个页签：正文、摘录、备注。正文由 [ReaderView.ets](../../entry/src/main/ets/components/ReaderView.ets)
+  渲染；只要 `snapshotPath` 可读就读取（不要求 `snapshotStatus === DONE`），旧纯文本快照按段落降级。
+- 正文页签内是行内阅读器：按段落/标题/引用/列表/代码块渲染，支持选中文本“存为摘录”；工具栏提供
+  “字号”和“专注阅读”。
+- “专注阅读”通过 `bindContentCover` 打开全屏 `ReaderView`（`immersive=true`）：支持搜索/高亮、
+  目录跳转、字号/行距/段距、阅读进度、按书签记忆滚动位置，进度 ≥90% 时标记已读。
+- 阅读偏好（字号 15–23fp、行距三档、段距三档）存在 `flowpage_settings`；阅读位置按书签存在
+  `flowpage_reader`，仅本机，不参与 WebDAV 同步。
+- 正文页签固定显示“重新抓取”，可在提取规则更新后覆盖旧快照；没有快照时也显示“重试抓取”。
 - 编辑态保存标题、标签、摘录、备注；标签同时按英文逗号和中文逗号切分并去重。
-- 操作：打开原文（系统 `viewData`）、分享原文 URL（`systemShare`）、复制 `flowpage://bookmark/{id}` 深链、星标、归档、查链接、删除。
+- 操作：打开原文（系统 `viewData`）、分享原文 URL（`systemShare`）、复制 `flowpage://bookmark/{id}` 深链、星标、归档、查链接、重新抓取、删除。
 - 删除是软删除并提示 30 天；已在回收站时提供“恢复 / 彻底删除”，彻底删除会先确认并删除快照。
 - “查链接”调用 `MetadataService.checkLink()`，写入 `link_status`（1 可用 / 2 可能失效 / 0 未判断）。
-- 正文缺失时可“重试抓取”，调用 `FlowRepository.applyMetadata()`。
 
 ## 4. 收笺与分享
 

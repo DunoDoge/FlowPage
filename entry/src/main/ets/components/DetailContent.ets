@@ -2,16 +2,17 @@ import { Want } from '@kit.AbilityKit';
 import { KeyCode } from '@kit.InputKit';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { systemShare } from '@kit.ShareKit';
-import { preferences } from '@kit.ArkData';
 import { MetadataService } from '../core/service/MetadataService';
+import { ArticleDocument } from '../model/Article';
+import { MetadataApplyResult } from '../model/MetadataResult';
 import { Bookmark } from '../model/Bookmark';
 import { AppState } from '../common/AppState';
 import { ReadState, SnapshotStatus } from '../common/Constants';
 import { formatFullDate } from '../common/DateUtil';
 import { deepLinkTextOf, shareContentOf } from '../common/ShareUtil';
-import { splitIntoChunks } from '../common/TextUtil';
 import { domainOf } from '../common/UrlUtil';
 import { FlowRepository } from '../repository/FlowRepository';
+import { ReaderView } from './ReaderView';
 
 @ComponentV2
 export struct DetailContent {
@@ -21,12 +22,13 @@ export struct DetailContent {
   @Event onBack: () => void = () => {};
   @Event onRemoved: () => void = () => {};
 
+  @Local appState: AppState = AppState.shared;
   @Local bookmark: Bookmark = new Bookmark();
   @Local hasBookmark: boolean = false;
   @Local tab: number = 0;
-  @Local snapshot: string = '';
-  @Local snapshotChunks: string[] = [];
-  @Local snapshotLoading: boolean = false;
+  @Local article: ArticleDocument = new ArticleDocument();
+  @Local articleLoading: boolean = false;
+  @Local showReader: boolean = false;
   @Local editing: boolean = false;
   @Local draftTitle: string = '';
   @Local draftNote: string = '';
@@ -35,12 +37,10 @@ export struct DetailContent {
   @Local busy: boolean = false;
   @Local linkStatus: number = 0;
   @Local checking: boolean = false;
-  @Local readingSize: number = 17;
-  @Local readingLine: number = 30;
   private readTimer: number = -1;
+  private articleKey: string = '';
 
   aboutToAppear(): void {
-    this.readReading();
     this.load();
   }
 
@@ -51,6 +51,36 @@ export struct DetailContent {
   @Monitor('bookmarkId')
   onBookmarkChanged(): void {
     this.load();
+  }
+
+  @Monitor('appState.refreshTick')
+  onLibraryChanged(): void {
+    this.syncSnapshot().catch(() => {});
+  }
+
+  // applyMetadata() can run outside this page (e.g. the share flow). Refresh
+  // only the snapshot fields so draft edits are not clobbered by a list tick.
+  private async syncSnapshot(): Promise<void> {
+    if (this.bookmarkId.length === 0 || this.busy || this.editing) {
+      return;
+    }
+    const found = await FlowRepository.get().get(this.bookmarkId);
+    if (found === undefined) {
+      return;
+    }
+    const snapshotChanged = found.snapshotPath !== this.bookmark.snapshotPath ||
+      found.snapshotAt !== this.bookmark.snapshotAt;
+    this.bookmark = found;
+    this.hasBookmark = true;
+    this.linkStatus = found.linkStatus;
+    if (!snapshotChanged) {
+      return;
+    }
+    this.articleKey = '';
+    this.article = new ArticleDocument();
+    if (this.tab === 0) {
+      await this.loadArticle(found);
+    }
   }
 
   private clearReadingTimer(): void {
@@ -80,6 +110,10 @@ export struct DetailContent {
       this.hasBookmark = false;
       return;
     }
+    if (this.bookmark.id !== found.id) {
+      this.articleKey = '';
+      this.article = new ArticleDocument();
+    }
     this.bookmark = found;
     this.hasBookmark = true;
     this.linkStatus = found.linkStatus;
@@ -99,59 +133,35 @@ export struct DetailContent {
       this.startReadingTimer(found.id);
     }
     if (this.tab === 0) {
-      this.loadSnapshot(found);
+      await this.loadArticle(found);
     }
   }
 
-  private async loadSnapshot(bookmark: Bookmark): Promise<void> {
-    if (bookmark.snapshotStatus !== SnapshotStatus.DONE) {
-      this.snapshot = '';
-      this.snapshotChunks = [];
+  private articleKeyOf(bookmark: Bookmark): string {
+    return `${bookmark.id}|${bookmark.snapshotPath}|${bookmark.snapshotAt}`;
+  }
+
+  private async loadArticle(bookmark: Bookmark): Promise<void> {
+    const key = this.articleKeyOf(bookmark);
+    if (this.articleKey === key) {
       return;
     }
-    this.snapshotLoading = true;
-    this.snapshot = '';
-    this.snapshotChunks = [];
+    this.articleKey = key;
+    if (bookmark.snapshotPath.length === 0) {
+      this.article = new ArticleDocument();
+      this.articleLoading = false;
+      return;
+    }
+    this.articleLoading = true;
     try {
-      const text = await FlowRepository.get().loadSnapshot(bookmark);
-      this.snapshot = text;
-      this.snapshotChunks = splitIntoChunks(text, 4000);
+      const loaded = await FlowRepository.get().loadArticle(bookmark);
+      if (this.articleKey === key) {
+        this.article = loaded;
+      }
     } catch (error) {
-      this.snapshot = '';
-      this.snapshotChunks = [];
+      this.article = new ArticleDocument();
     } finally {
-      this.snapshotLoading = false;
-    }
-  }
-
-  private readReading(): void {
-    try {
-      const store = preferences.getPreferencesSync(getContext(this), { name: 'flowpage_settings' });
-      const size = store.getSync('reading_size', 17);
-      this.readingSize = typeof size === 'number' ? size : 17;
-      this.readingLine = this.readingSize + 13;
-    } catch (error) {
-      this.readingSize = 17;
-      this.readingLine = 30;
-    }
-  }
-
-  private changeReading(delta: number): void {
-    let next = this.readingSize + delta;
-    if (next < 15) {
-      next = 15;
-    }
-    if (next > 21) {
-      next = 21;
-    }
-    this.readingSize = next;
-    this.readingLine = next + 13;
-    try {
-      const store = preferences.getPreferencesSync(getContext(this), { name: 'flowpage_settings' });
-      store.putSync('reading_size', next);
-      store.flush().catch(() => {});
-    } catch (error) {
-      return;
+      this.articleLoading = false;
     }
   }
 
@@ -192,14 +202,23 @@ export struct DetailContent {
   }
 
   private async refreshMetadata(): Promise<void> {
-    if (!this.hasBookmark) {
+    if (!this.hasBookmark || this.busy) {
       return;
     }
     this.busy = true;
     try {
-      await FlowRepository.get().applyMetadata(this.bookmark.id);
+      const result = await FlowRepository.get().applyMetadata(this.bookmark.id);
+      if (result === MetadataApplyResult.FAILED) {
+        AppState.shared.toast('抓取失败，请检查网络后重试');
+        return;
+      }
+      this.articleKey = '';
       await this.load();
-      AppState.shared.toast('已经重新抓取');
+      if (result === MetadataApplyResult.EMPTY) {
+        AppState.shared.toast('没有提取到正文，请稍后再试');
+      } else {
+        AppState.shared.toast('已经重新抓取');
+      }
     } catch (error) {
       AppState.shared.toast('抓取失败，请检查网络后重试');
     } finally {
@@ -431,7 +450,7 @@ export struct DetailContent {
   private switchTab(index: number): void {
     this.tab = index;
     if (index === 0 && this.hasBookmark) {
-      this.loadSnapshot(this.bookmark);
+      this.loadArticle(this.bookmark).catch(() => {});
     }
   }
 
@@ -449,6 +468,37 @@ export struct DetailContent {
     .onKeyEvent((event: KeyEvent) => {
       if (event.type === KeyType.Down && event.keyCode === KeyCode.KEYCODE_ESCAPE && this.showBack) {
         this.onBack();
+      }
+    })
+    .bindContentCover(this.showReader, this.FullReader(), {
+      modalTransition: ModalTransition.DEFAULT,
+      onDisappear: () => {
+        this.showReader = false;
+      }
+    })
+  }
+
+  @Builder
+  FullReader() {
+    ReaderView({
+      bookmark: this.bookmark,
+      bookmarkId: this.bookmark.id,
+      article: this.article,
+      compact: this.compact,
+      immersive: true,
+      loading: this.articleLoading || this.busy,
+      onClose: () => {
+        this.showReader = false;
+      },
+      onRetry: () => {
+        this.refreshMetadata();
+      },
+      onReadComplete: () => {
+        this.markRead(this.bookmark.id);
+      },
+      onExcerptSaved: (excerpt: string) => {
+        this.bookmark.excerpt = excerpt;
+        this.draftExcerpt = excerpt;
       }
     })
   }
@@ -595,76 +645,25 @@ export struct DetailContent {
         .color($r('app.color.line'))
         .margin({ top: 8, bottom: 18 })
 
-      if (this.tab === 0 && this.snapshotChunks.length > 0) {
-        Row({ space: 12 }) {
-          Text('字号')
-            .fontSize(10)
-            .fontColor($r('app.color.ink_tertiary'))
-          Text('A−')
-            .fontSize(13)
-            .fontColor($r('app.color.ink_secondary'))
-            .height(44)
-            .width(44)
-            .textAlign(TextAlign.Center)
-            .accessibilityText('缩小正文字号')
-            .focusable(true)
-            .onClick(() => this.changeReading(-2))
-          Text('A+')
-            .fontSize(13)
-            .fontColor($r('app.color.ink_secondary'))
-            .height(44)
-            .width(44)
-            .textAlign(TextAlign.Center)
-            .accessibilityText('放大正文字号')
-            .focusable(true)
-            .onClick(() => this.changeReading(2))
-        }
-        .width('100%')
-        .margin({ bottom: 4 })
-      }
-
       if (this.tab === 0) {
-        if (this.snapshotLoading) {
-          Text('正在翻出正文…')
-            .fontSize(14)
-            .fontColor($r('app.color.ink_tertiary'))
-        } else if (this.snapshotChunks.length > 0) {
-          Column({ space: 0 }) {
-            ForEach(this.snapshotChunks, (chunk: string, index: number) => {
-              Text(chunk)
-                .fontSize(this.readingSize)
-                .lineHeight(this.readingLine)
-                .fontColor($r('app.color.ink'))
-                .width('100%')
-                .textAlign(TextAlign.Start)
-                .margin({ bottom: 10 })
-            }, (chunk: string, index: number) => `${index}:${chunk.length}:${chunk.slice(0, 32)}`)
+        ReaderView({
+          bookmark: this.bookmark,
+          bookmarkId: this.bookmark.id,
+          article: this.article,
+          compact: this.compact,
+          immersive: false,
+          loading: this.articleLoading || this.busy,
+          onOpenImmersive: () => {
+            this.showReader = true;
+          },
+          onRetry: () => {
+            this.refreshMetadata();
+          },
+          onExcerptSaved: (excerpt: string) => {
+            this.bookmark.excerpt = excerpt;
+            this.draftExcerpt = excerpt;
           }
-          .width('100%')
-        } else {
-          Column({ space: 10 }) {
-            Text('这条还没存下正文。')
-              .fontSize(15)
-              .fontColor($r('app.color.ink_secondary'))
-            Text(this.busy ? '正在抓取…' : '重试抓取')
-              .fontSize(13)
-              .fontColor($r('app.color.ink'))
-              .border({ width: 1, color: $r('app.color.line_strong') })
-              .borderRadius(6)
-              .height(44)
-              .padding({ left: 12, right: 12 })
-              .accessibilityText('重新抓取正文')
-              .focusable(true)
-              .onClick(() => {
-                if (!this.busy) {
-                  this.refreshMetadata();
-                }
-              })
-          }
-          .alignItems(HorizontalAlign.Start)
-          .width('100%')
-          .padding({ top: 12, bottom: 12 })
-        }
+        })
       } else if (this.tab === 1) {
         if (this.bookmark.excerpt.length > 0) {
           Row() {
@@ -718,13 +717,14 @@ export struct DetailContent {
           this.ActionLabel(this.bookmark.starred ? '取消星标' : '加星标', () => this.toggleStar())
           this.ActionLabel(this.bookmark.archived ? '取消归档' : '归档', () => this.toggleArchive())
           this.ActionLabel('查链接', () => this.checkLink())
+          this.ActionLabel('重新抓取', () => this.refreshMetadata())
           this.ActionLabel(this.bookmark.readState === ReadState.READ ? '标记未读' : '标记已读', () => this.toggleRead())
           this.ActionLabel('删除', () => this.confirmDelete())
         }
       }
       .width('100%')
 
-      Text(this.snapshot.length > 0 ? '已存下正文' : (this.bookmark.snapshotStatus === SnapshotStatus.OFF ? '自动快照已关闭' : '正文待补全'))
+      Text(this.article.blocks.length > 0 ? '已存下正文' : (this.bookmark.snapshotStatus === SnapshotStatus.OFF ? '自动快照已关闭' : '正文待补全'))
         .fontSize(11)
         .fontColor($r('app.color.ink_tertiary'))
         .margin({ top: 18 })

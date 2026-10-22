@@ -34,6 +34,7 @@
 | [records/01-implementation-log.md](./records/01-implementation-log.md) | 已实现功能、真机验证结果、偏差与待办 | 评审 / 验收 |
 | [records/02-code-review.md](./records/02-code-review.md) | 功能完成度、代码质量、P0/P1 问题、两批工作清单与新会话提示词 | 开发 / 评审 |
 | [records/03-review-follow-up.md](./records/03-review-follow-up.md) | 第二轮复审结论的三子代理复核、确认问题清单、测试/文档修正与第三批提示词 | 开发 / 评审 |
+| [records/04-reading-mode.md](./records/04-reading-mode.md) | 2026-10-22 阅读模式：结构化正文、全屏阅读器、偏好与验证记录 | 开发 / 评审 |
 | [wiki/README.md](./wiki/README.md) | 分层 Code Wiki：架构、UI、数据、同步与服务、构建运行 | 开发 / 维护 |
 
 ## 方案速览
@@ -51,12 +52,12 @@
 
 ## 当前状态
 
-- 批次 A（单机核心）、批次 B 的 WebDAV 与已落地系统能力（接续、卡片注册）、批次 C 的隐私/阅读增强已完成并通过真机验证；内置浏览器/阅读模式、分布式 KV、碰一碰仍未实现。
-- 已验证：分享扩展、HTML 导入、粘贴控件、标签/搜索、深色、一多、WebDAV 双向同步（本地测试服务 + 真实坚果云）、跨设备下载、HUKS 凭据加密、失效链接检测、阅读字号、自动快照开关、阅读状态、冲突记录 UI、SQL 分页与搜索高亮。
-- 待完成：分布式 KV、App Linking 域名、碰一碰实测、内置浏览器/阅读模式、WebDAV 端到端加密、冲突字段级合并、服务卡片人工添加验收、键盘完整路径验收、应用内隐私说明页；favicon 已明确不做。
+- 批次 A（单机核心）、批次 B 的 WebDAV 与已落地系统能力（接续、卡片注册）、批次 C 的隐私/阅读增强已完成并通过真机验证；阅读模式已补齐（结构化正文 + 全屏阅读器），内置浏览器、分布式 KV、碰一碰仍未实现。
+- 已验证：分享扩展、HTML 导入、粘贴控件、标签/搜索、深色、一多、WebDAV 双向同步（本地测试服务 + 真实坚果云）、跨设备下载、HUKS 凭据加密、失效链接检测、阅读字号/行距/段距、自动快照开关、阅读状态、正文搜索、目录跳转、选中存摘录、冲突记录 UI、SQL 分页与搜索高亮。
+- 待完成：分布式 KV、App Linking 域名、碰一碰实测、内置浏览器、WebDAV 端到端加密、冲突字段级合并、服务卡片人工添加验收、键盘完整路径验收、应用内隐私说明页；favicon 已明确不做。
 - 2026-10-21 复审：P0 4 项一致性问题（标签变更不同步、清空语义、快照文件生命周期、同步状态误报）与 P1 验收缺口已在同日第一/第二批收口。详见 [records/02-code-review.md](./records/02-code-review.md) §10。
 - 2026-10-21 第二轮复审 + 三子代理复核：第一/二批修复逐条核实有效；4 项 P1 与 5 项 P2 已于第三/第四批修复（T3.1–T3.8），详见 [records/03-review-follow-up.md](./records/03-review-follow-up.md)。
-- 测试：10 个套件 / 81 个用例；模拟器 81/81 通过，手机主功能 77/77 通过（81 版因锁屏未复跑），见 [quality/01-walkthrough-checklist.md](./quality/01-walkthrough-checklist.md) §5。
+- 测试：11 个套件 / 106 个用例；模拟器 106/106 通过，手机主功能 77/77 通过（旧 82 用例版因锁屏未复跑），见 [quality/01-walkthrough-checklist.md](./quality/01-walkthrough-checklist.md) §5。
 - 走查问题：N1–N11 已全部修复并验证，其中 N4 完成连接 207、手机上传 6 条、2in1 下载 6 条；N10/N11 修复重复同步与首页即时刷新。见 [quality/02-walkthrough-issues.md](./quality/02-walkthrough-issues.md)。
 - 背景与早期实现细节见 [records/01-implementation-log.md](./records/01-implementation-log.md)（历史快照）。
 
@@ -81,7 +82,7 @@
 
 1. 是否提供第二台鸿蒙设备，用于碰一碰、分布式与更多跨端验收。
 2. 是否配置 App Linking 域名并完成 `/.well-known/applinking.json` 校验。
-3. 是否在 V1.1 落地内置浏览器与正文阅读模式。
+3. 是否在 V1.1 落地内置浏览器（阅读器与正文快照增强已交付）。
 4. 服务卡片与键盘完整路径的人工验收由谁在何时完成。
 
 ## 技术基线

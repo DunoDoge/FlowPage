@@ -13,7 +13,7 @@
 | 状态 | `@ObservedV2` + `@Trace` + `@ComponentV2` + `@Local` / `@Param` / `@Event` / `@Monitor` |
 | 数据 | RDB `flowpage.db`（6 表 + 7 索引）、preferences、`filesDir/snapshots/*.txt` |
 | 同步 | WebDAV（Basic Auth），ETag 增量 + LWW；无分布式 KV、无账号体系 |
-| 测试 | `@ohos/hypium`，`entry/src/ohosTest` 10 个套件 / 81 个用例，仅设备端 |
+| 测试 | `@ohos/hypium`，`entry/src/ohosTest` 11 个套件 / 106 个用例，仅设备端 |
 
 ## 构建与验证（顺序有讲究）
 
@@ -72,7 +72,7 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   `removePreferencesFromCacheSync`，否则读到旧快照。`FlowRepository.notify()` 已做“写快照 + 推送”串行合并。
 - 所有 URL 先经 `normalizeUrl()`：补 `https://`、小写 host、去 fragment、去跟踪参数、query 排序；`url_key`
   唯一索引负责去重。新增入口不要自己比较原始字符串。
-- 正文快照是 `filesDir/snapshots/<id>.txt` 纯文本，**不上传同步**；同步只传链接、元数据、标签和状态。
+- 正文快照是 `filesDir/snapshots/<id>.txt` 的结构化文本（`FLOWPAGE-ARTICLE-1` 版本头），**不上传同步**；同步只传链接、元数据、标签和状态。阅读位置存本机 `flowpage_reader`，不参与同步。
 - 删除语义：软删除 `deleted=1` 保留 30 天；彻底删除/过期清理会写 `tombstone`，同步先传墓碑再删远端文件。
   墓碑是“不复活”的唯一保障，任何清理路径都不能跳过 `addTombstone`。
 - 上传竞态：PUT 前记录 `rev + updatedAt`，成功后仅当仍匹配才回填 ETag 并清 `dirty`；不匹配说明同步期间

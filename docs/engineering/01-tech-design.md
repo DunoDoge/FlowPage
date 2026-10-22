@@ -293,28 +293,31 @@ CREATE TABLE IF NOT EXISTS tombstone (
 
 ### 5.5 正文快照与阅读模式
 
-**V1.0（纯文本快照）**
+**提取与落盘**
 
 - 优先复用元数据请求返回的 HTML，避免二次请求。
-- 去脚本/样式/导航/页脚 → 取 `<article>` 或文本密度最高的容器 → 转纯文本（保留段落换行）。
-- 上限 200 KB（`Limits.snapshotBytes`），存 `files/snapshots/{id}.txt`；RDB 只存路径与 400 字内描述。
+- 去脚本/样式/导航/页脚 → 取 `<article>` 或文本密度最高的容器 → 输出结构化块（heading / paragraph / quote / listItem / code）。
+- 上限 204800 字符（按字符计，不按 UTF-8 字节；常量名沿用 `Limits.snapshotBytes`），存 `files/snapshots/{id}.txt`；RDB 只存路径与 400 字内描述。
 - 失败不影响收笺。
 
-**V1.1（内置浏览器 + 阅读模式）**
+**当前实现（2026-10-22，结构化快照 + 原生阅读器）**
 
-- `BrowserPage` 使用 `Web` 组件，顶部地址栏与操作条（收笺、阅读、刷新、分享）。
-- 阅读模式：`runJavaScript` 注入提取脚本：
-  ```js
-  (() => {
-    const el = document.querySelector('article') ||
-      [...document.querySelectorAll('main,div,section')]
-        .sort((a,b) => b.innerText.length - a.innerText.length)[0] ||
-      document.body;
-    return JSON.stringify({ title: document.title, text: el.innerText });
-  })()
-  ```
-- 原生渲染文本，提供字号、行距、深浅色切换；不加载原页面脚本。
-- 阅读进度（滚动百分比）写入 `read_at` 与本地 preferences，供接续恢复。
+- `ArticleExtractor` 从同一份元数据 HTML 中提取正文块（heading / paragraph / quote / listItem / code），
+  在 `<article>` / `<main>` / 正文 class/id 容器 / `<body>` 中选覆盖足够的候选：所有候选都需覆盖清理后的
+  `<body>` 至少 50%。**先对 body 做 junk 清理再计分**，否则 `<article class="comments">`、`.post-navigation`、
+  `.article-list` 等会劫持真实正文；junk 判定按 class/id 的 `[\s_-]+` token 匹配（`downloads` / `uploads` /
+  `threads` / `unavailable` / `commentary` 等不误删），并覆盖 `<article>` 容器。`teaser` / `recommend` /
+  `related` / `promo` 为强 teaser，`card` / `summary` 为弱 teaser；强弱 teaser 都只在存在另一个非 teaser 的
+  `<article>` 竞争正文且剩余非 teaser 文本至少 200 字时才删除；`<main>` 与正文 class/id 包装可能只是把 teaser
+  和未命名评论包在一起，不算竞争容器；未被命名的 `<div>`（如评论）同样不算，此时保守保留 teaser，优先不丢正文。`post-meta` / `entry-meta` / `post-header` 等命名同样按 token 作为噪声移除，候选过小时回退
+  `<body>`；保留 `<article>` 与 `<main>` 内 `<header>` 的导语，同时剔除导航、页脚、评论、分享、广告等噪声。
+  标题去重先剥离站点后缀并支持 CJK 短标题前缀比较。
+- `ArticleCodec` 把块编码为带 `FLOWPAGE-ARTICLE-1` 版本头的文本，仍存
+  `files/snapshots/<id>.txt`；旧纯文本快照读取时降级为段落。正文仍不上传同步。
+- `ReaderView` 提供行内与全屏两种形态：全屏使用 `bindContentCover`；支持字号/行距/段距、TOC、
+  正文搜索与高亮、选中存摘录、阅读进度和按书签恢复位置；进度 ≥90% 标记已读。
+- 阅读偏好存 `flowpage_settings`，阅读位置存本机 `flowpage_reader`，不新增同步字段。
+- 内置浏览器（`Web` 组件 + 在线注入提取）仍未实现，保留为后续增强。
 
 ### 5.6 服务卡片
 
@@ -503,7 +506,7 @@ sync():
 
 ### 8.1 单元测试（Hypium）
 
-设备端在 `entry/src/ohosTest`，当前 10 个套件 / 81 个用例：
+设备端在 `entry/src/ohosTest`，当前 11 个套件 / 106 个用例：
 
 | 套件 | 覆盖 |
 |---|---|
@@ -513,6 +516,7 @@ sync():
 | `SyncStoreTest` | URL 归一化、去重、墓碑、dirty 竞态、冲突记录、旧库迁移 |
 | `TagSyncTest` | 标签改名/合并/删除、`search_text` 重建、回收站计数 |
 | `SnapshotTest` | clearAll/purgeExpired/purge/purgeFromRemote 快照清理 |
+| `ReaderTest` | 正文容器与 teaser/junk 规则、标题去重、元数据写回分类、阅读进度 |
 | `ConflictTest` | 冲突计数、列表、恢复本地/采用远端 |
 | `RepositoryTest` | 编辑 rev、阅读状态、自动快照、摘要口径、卡片序列化 |
 | `QueryTest` | SQL 分页、关键字/标签过滤、LIKE 转义、域名排序、冷/热基准 |

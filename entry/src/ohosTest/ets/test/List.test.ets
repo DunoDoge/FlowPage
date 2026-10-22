@@ -4,6 +4,7 @@ import syncEngineTest from './SyncEngine.test'
 import syncStoreTest from './SyncStore.test'
 import tagSyncTest from './TagSync.test'
 import snapshotTest from './Snapshot.test'
+import readerTest from './Reader.test'
 import conflictTest from './Conflict.test'
 import repositoryTest from './Repository.test'
 import queryTest from './Query.test'
@@ -16,6 +17,7 @@ export default function testsuite() {
   syncStoreTest()
   tagSyncTest()
   snapshotTest()
+  readerTest()
   conflictTest()
   repositoryTest()
   queryTest()

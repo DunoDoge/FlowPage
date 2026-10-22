@@ -544,7 +544,7 @@ curl -u 邮箱:应用密码 -X PROPFIND -H "Depth: 0" \
 
 - 来源：本轮同步可靠性任务（P0-1 / P0-2 / P1-1 / P1-2 / P1-3）
 - 构建：SDK Hvigor 7.26.8 `assembleHap` **BUILD SUCCESSFUL**
-- 自动化：当时 Hypium 28 个用例在 HUAWEI Pura 70 `aa test` 全通过（当前 81 个，见 quality/01 §5）
+- 自动化：当时 Hypium 28 个用例在 HUAWEI Pura 70 `aa test` 全通过（当前 106 个，见 quality/01 §5）
 
 ### P0-1 彻底删除的跨端语义
 

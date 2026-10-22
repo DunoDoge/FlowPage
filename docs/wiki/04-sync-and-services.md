@@ -165,15 +165,31 @@ id、url、标题/摘要/站点/图标/封面、备注/摘录、标签、`folder
 - `fetch(url)`：GET，8s 连接/读取超时，限制 512 KiB；按响应头 `charset` 或 `<meta charset>` 解码，
   失败回退 UTF-8。抓取 `og:title`（回退 `<title>`）、`og:description`（回退 `description`，再回退正文前 160 字）、
   `og:site_name`、`og:image`、`rel=icon`（回退 `/favicon.ico`），相对地址用 `URL` 解析。
-- 正文用正则去 script/style/注释/标签后折叠空白，截断到 204800 字符（常量名 `snapshotBytes`，实际按字符切）；
+- 正文由 [ArticleExtractor.ets](../../entry/src/main/ets/core/parser/ArticleExtractor.ets) 提取：剔除
+  script/style/nav/aside/form 等噪声，只移除 `<article>` / `<main>` 外的 header/footer（保留正文容器内
+  header 导语）。**选容器前先对 `<body>` 做一次 junk 清理**（包括 `<article class="comments">` 等），再按清理后的
+  body 计分，避免评论/导航体量把真实正文挤成“teaser”。优先 `<article>` → `<main>` → 正文 class/id 容器 →
+  `<body>`，所有候选都需覆盖 body 至少 50%；junk 命名按 class/id 的 `[\s_-]+` token 精确匹配（不再用裸子串，
+  因此 `downloads` / `uploads` / `threads` / `unavailable` / `commentary` 不会被误删）。`teaser` / `recommend` /
+  `related` / `promo` 为强 teaser，`card` / `summary` 为弱 teaser；强弱 teaser 都**只在存在另一个非 teaser 的
+  `<article>` 竞争正文且删除后仍剩至少 200 字非 teaser 文本时**才删除；`<main>` 与正文 class/id 包装可能只是把
+  teaser 和未命名评论包在一起，不算竞争容器；未被命名的 `<div>`（如评论）同样不算，此时保守保留 teaser，
+  宁可留下 teaser 也不丢唯一正文。`post-meta` / `entry-meta` / `post-header` 等元信息
+  命名同样按 token 当噪声删除，候选过小时回退 `<body>`；用标签栈输出 heading / paragraph / quote / listItem /
+  code 块，保留段落边界、换行与代码换行。标题去重会先剥离 ` - ` / ` | ` / ` · ` / ` — ` / ` – ` 等站点后缀，
+  支持 CJK 短标题前缀匹配，并可跳过首个日期/作者行；总文本（含空块 fallback）截断到 204800 字符
+  （`Limits.snapshotBytes`）。
   标题截 200 字符、描述截 400 字符。
 - `checkLink(url)`：HEAD，405/403 时 GET 兜底；2xx/3xx 可用（1），404/410/5xx 可能失效（2），其余未知（0）。
 - `FlowRepository.applyMetadata()` 只在标题为空或等于域名兜底时用抓取标题覆盖，避免覆盖用户手改标题；
-  快照文本落盘后 `snapshotStatus=DONE`，抓取失败置 `FAILED`。
+  结构化快照落盘后 `snapshotStatus=DONE`；抓取失败保留原快照状态，不覆盖已有正文。
 - 设置页「自动保存正文快照」关闭后（preferences `flowpage_settings.auto_snapshot=false`），
-  `MetadataService.fetch(url, false)` 仍抓取标题/摘要，但不返回正文，`snapshotStatus` 写 `OFF`。
-- [SnapshotStore.ets](../../entry/src/main/ets/core/service/SnapshotStore.ets)：`filesDir/snapshots/<id>.txt`，
-  纯文本、同步不包含。
+  `MetadataService.fetch(url, false)` 仍抓取标题/摘要，但不返回正文；没有可读旧快照时写 `OFF`，
+  已有可读快照保持 `DONE`，仍可阅读。
+- [SnapshotStore.ets](../../entry/src/main/ets/core/service/SnapshotStore.ets)：仍写
+  `filesDir/snapshots/<id>.txt`，内容是带 `FLOWPAGE-ARTICLE-1` 版本头的结构化文本
+  （`core/service/ArticleCodec.ets` 编解码）；旧纯文本快照读取时降级为段落，同步仍不包含正文。
+- 提取规则更新后，详情页“重新抓取”在提取到有效正文时覆盖旧快照；抓取失败或正文为空时保留旧快照。
 
 ## 8. 错误文案
 

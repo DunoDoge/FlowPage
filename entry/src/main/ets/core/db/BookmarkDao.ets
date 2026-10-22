@@ -566,7 +566,7 @@ export class BookmarkDao {
     );
   }
 
-  // column is a fixed literal from the three callers below, never user input.
+  // column is a fixed literal from the callers below, never user input.
   private async setSearchField(id: string, column: string, value: string): Promise<void> {
     const store = Database.getStore();
     const now = Date.now();
@@ -595,8 +595,34 @@ export class BookmarkDao {
     await this.setSearchField(id, 'note', note);
   }
 
-  async setExcerpt(id: string, excerpt: string): Promise<void> {
-    await this.setSearchField(id, 'excerpt', excerpt);
+  async appendExcerpt(id: string, text: string): Promise<string> {
+    const store = Database.getStore();
+    const now = Date.now();
+    store.beginTransaction();
+    try {
+      const bookmark = await this.findById(id);
+      if (bookmark === undefined) {
+        store.commit();
+        return '';
+      }
+      const existing = bookmark.excerpt;
+      const next = existing.trim().length === 0 ? text : `${existing}\n\n${text}`;
+      await store.executeSql(
+        'UPDATE bookmark SET excerpt = ?, updated_at = ?, rev = rev + 1, dirty = 1 WHERE id = ?',
+        [next, now, id]
+      );
+      bookmark.excerpt = next;
+      bookmark.rebuildSearch();
+      await store.executeSql(
+        'UPDATE bookmark SET search_text = ? WHERE id = ?',
+        [bookmark.searchText, id]
+      );
+      store.commit();
+      return next;
+    } catch (error) {
+      store.rollBack();
+      throw new Error('DB_WRITE_FAILED');
+    }
   }
 
   async setTitle(id: string, title: string): Promise<void> {

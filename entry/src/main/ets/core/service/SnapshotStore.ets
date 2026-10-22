@@ -1,5 +1,7 @@
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { common } from '@kit.AbilityKit';
+import { ArticleDocument } from '../../model/Article';
+import { ArticleCodec } from './ArticleCodec';
 
 export class SnapshotStore {
   private static ensureDir(context: common.Context): string {
@@ -25,6 +27,28 @@ export class SnapshotStore {
     fs.writeSync(file.fd, text);
     fs.closeSync(file);
     return path;
+  }
+
+  static saveArticle(context: common.Context, id: string, document: ArticleDocument): string {
+    return SnapshotStore.save(context, id, ArticleCodec.encode(document));
+  }
+
+  static readArticle(path: string): ArticleDocument {
+    return ArticleCodec.decode(SnapshotStore.read(path));
+  }
+
+  static isReadable(path: string): boolean {
+    if (path.length === 0) {
+      return false;
+    }
+    try {
+      if (!fs.accessSync(path)) {
+        return false;
+      }
+      return fs.readTextSync(path).length > 0;
+    } catch (error) {
+      return false;
+    }
   }
 
   static read(path: string): string {

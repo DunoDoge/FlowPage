@@ -339,6 +339,33 @@ export default function repositoryTest() {
       expect((await dao.listTombstones()).length).assertEqual(2);
     });
 
+    it('appendExcerptPreservesExistingWhitespaceAndTouchesSearch', 0, async () => {
+      const dao = new BookmarkDao();
+      const bookmark = Bookmark.create(
+        'https://example.com/excerpt-keep',
+        '摘录追加',
+        BookmarkSource.MANUAL
+      );
+      bookmark.excerpt = '  原有摘录  ';
+      bookmark.rebuildSearch();
+      await dao.insert(bookmark);
+      const before = await dao.findById(bookmark.id);
+      expect(before === undefined).assertFalse();
+
+      const next = await FlowRepository.get().appendExcerpt(bookmark.id, '新增摘录');
+      expect(next).assertEqual('  原有摘录  \n\n新增摘录');
+
+      const loaded = await dao.findById(bookmark.id);
+      expect(loaded === undefined).assertFalse();
+      if (loaded !== undefined && before !== undefined) {
+        expect(loaded.excerpt).assertEqual('  原有摘录  \n\n新增摘录');
+        expect(loaded.searchText.indexOf('原有摘录')).assertLargerOrEqual(0);
+        expect(loaded.searchText.indexOf('新增摘录')).assertLargerOrEqual(0);
+        expect(loaded.dirty).assertTrue();
+        expect(loaded.rev).assertEqual(before.rev + 1);
+      }
+    });
+
     it('persistsAutoSnapshotSetting', 0, async () => {
       if (context === undefined) {
         expect(context === undefined).assertFalse();

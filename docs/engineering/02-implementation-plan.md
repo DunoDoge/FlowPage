@@ -2,7 +2,7 @@
 
 > 时效说明：本文是批次 A/B/C 的实施与验收基线；实际交付差异以 [records/02-code-review.md](../records/02-code-review.md)、
 > [records/03-review-follow-up.md](../records/03-review-follow-up.md) 和 [quality/01-walkthrough-checklist.md](../quality/01-walkthrough-checklist.md) 为准。
-> 未标注「规划」的验收项为当前版本目标；B5/B6/B7、F16/F17/F18 的跨端能力尚未全部落地。
+> 未标注「规划」的验收项为当前版本目标；阅读模式已交付（结构化正文 + 原生阅读器），B5 的内置浏览器、B6/B7、F16/F18 的跨端能力尚未全部落地。
 
 - 文档版本：v1.1（按实现校准）
 - 前置文档：`product/01-prd.md`、`engineering/01-tech-design.md`、`design/01-ui-spec.md`
@@ -41,7 +41,7 @@
 | B2 | 同步引擎、增量、ETag、重试、冲突表 | `SyncEngine` |
 | B3 | 同步中心 UI、连接测试、冲突处理 | `SyncPage` |
 | B4 | 凭据 HUKS 加密存储 | `CredentialCipher` |
-| B5 | 内置浏览器 + 阅读模式（未交付，V1.1） | `BrowserPage`（规划） |
+| B5 | 阅读模式（已交付）+ 内置浏览器（未交付，V1.1） | `ReaderView`（已实现）/ `BrowserPage`（规划） |
 | B6 | 分布式 KV 通道（未交付，V1.1） | `DistributedTransport`（规划） |
 | B7 | 碰一碰 / 隔空传送（未交付，V1.1）；自定义 scheme 已实现 | 分享与深链 |
 | B8 | 应用接续（仅恢复当前书签） | `onContinue` |
@@ -96,7 +96,7 @@
 | F14 | WebDAV | 连接测试、首次全量、增量、删除同步正确 |
 | F15 | 冲突 | 双端修改后较新者胜，败方可在冲突记录恢复 |
 | F16 | 分布式（V1.1 规划） | 同账号可信设备可同步元数据与标签（当前未实现） |
-| F17 | 阅读模式（V1.1 规划） | 当前仅纯文本快照 + 字号调节，无正文提取与内置浏览器 |
+| F17 | 阅读模式（已交付） | 结构化正文、全屏阅读、搜索/目录/排版/进度/摘录；内置浏览器仍未实现 |
 | F18 | 接续 | 手机→PC 恢复同一书签（当前仅传 `bookmarkId`，不恢复滚动位置） |
 
 ### 3.2 数据与同步验收
@@ -131,7 +131,7 @@
 
 - `check_ets_files` 对所有新增/修改 `.ets` 通过。
 - `hvigorw clean assembleHap` 成功，无 ERROR（不要用 `devecocli build`）。
-- Hypium 单元测试全部通过（当前 10 套件 / 81 用例）。
+- Hypium 单元测试全部通过（当前 11 套件 / 106 用例）。
 - 无 `any` / `unknown` / 动态属性访问；`as` 仅允许平台类型边界（当前 5 处）。
 - 无硬编码密钥、账号、测试 URL。
 - 不申请与功能无关的权限。
@@ -194,7 +194,7 @@
 
 已确认：
 
-1. **范围**：批次 A → B → C 推进；B5/B6/B7 留待 V1.1。
+1. **范围**：批次 A → B → C 推进；B5 的内置浏览器、B6/B7 留待 V1.1。
 2. **同步验证**：已用坚果云应用密码完成手机上传、2in1 下载。
 3. **命名**：中文「流笺」、英文 `FlowPage`、包名 `com.dunodoge.flowpage`。
 4. **视觉**：极简纸感黑白，首页无底部 TabBar。
