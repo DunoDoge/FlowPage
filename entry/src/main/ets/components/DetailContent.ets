@@ -471,7 +471,7 @@ export struct DetailContent {
       }
     })
     .bindContentCover(this.showReader, this.FullReader(), {
-      modalTransition: ModalTransition.DEFAULT,
+      enableSafeArea: true,
       onDisappear: () => {
         this.showReader = false;
       }
