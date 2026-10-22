@@ -245,15 +245,22 @@ export struct StreamHome {
   }
 
   private allSelectedMatch(match: (item: Bookmark) => boolean): boolean {
-    if (this.selectedIds.length === 0) {
-      return false;
-    }
+    return this.selectedIds.length > 0 &&
+      this.countSelectedMatch(match) === this.selectedIds.length;
+  }
+
+  private anySelectedMatch(match: (item: Bookmark) => boolean): boolean {
+    return this.countSelectedMatch(match) > 0;
+  }
+
+  private countSelectedMatch(match: (item: Bookmark) => boolean): number {
+    let count = 0;
     for (let i = 0; i < this.filtered.length; i++) {
-      if (this.isChecked(this.filtered[i].id) && !match(this.filtered[i])) {
-        return false;
+      if (this.isChecked(this.filtered[i].id) && match(this.filtered[i])) {
+        count = count + 1;
       }
     }
-    return true;
+    return count;
   }
 
   private allSelectedStarred(): boolean {
@@ -268,16 +275,41 @@ export struct StreamHome {
     return this.allSelectedMatch((item: Bookmark) => item.readState === ReadState.READ);
   }
 
+  private starActionLabel(): string {
+    return this.allSelectedStarred() ? '取消星标' : '星标';
+  }
+
+  private archiveActionLabel(): string {
+    if (this.allSelectedArchived()) {
+      return '取消归档';
+    }
+    if (this.anySelectedMatch((item: Bookmark) => item.archived)) {
+      return '全部归档';
+    }
+    return '归档';
+  }
+
+  private readActionLabel(): string {
+    if (this.allSelectedRead()) {
+      return '标记未读';
+    }
+    if (this.anySelectedMatch((item: Bookmark) => item.readState === ReadState.READ)) {
+      return '全部已读';
+    }
+    return '标记已读';
+  }
+
   private async batchStar(): Promise<void> {
     if (this.batchBusy || this.selectedIds.length === 0) {
       return;
     }
     const ids = this.selectedIds.slice();
     const next = !this.allSelectedStarred();
+    const added = this.countSelectedMatch((item: Bookmark) => !item.starred);
     this.batchBusy = true;
     try {
       await FlowRepository.get().setStarredMany(ids, next);
-      AppState.shared.toast(next ? `已给 ${ids.length} 条加星` : `已取消 ${ids.length} 条星标`);
+      AppState.shared.toast(next ? `已加上 ${added} 条星标` : `已取消 ${ids.length} 条星标`);
       this.exitSelection();
     } catch (error) {
       AppState.shared.toast('批量加星失败，请重试');
@@ -732,9 +764,11 @@ export struct StreamHome {
     .backgroundColor($r('app.color.paper'))
   }
 
+  // Labels are providers so the Text update function reads selection state itself;
+  // a precomputed string would freeze when only the selection changes.
   @Builder
-  ActionChip(label: string, danger: boolean, action: () => void) {
-    Text(label)
+  ActionChip(label: () => string, danger: boolean, action: () => void) {
+    Text(label())
       .fontSize(13)
       .fontColor(danger ? $r('app.color.danger') : $r('app.color.ink'))
       .backgroundColor($r('app.color.surface_alt'))
@@ -743,7 +777,7 @@ export struct StreamHome {
       .padding({ left: 14, right: 14 })
       .textAlign(TextAlign.Center)
       .margin({ right: 8, top: 4 })
-      .accessibilityText(label)
+      .accessibilityText(label())
       .focusable(true)
       .onClick(action)
   }
@@ -752,30 +786,30 @@ export struct StreamHome {
   QuickActionPanel() {
     Flex({ wrap: FlexWrap.Wrap }) {
       if (this.actionTarget.deleted) {
-        this.ActionChip('恢复', false, () => {
+        this.ActionChip(() => '恢复', false, () => {
           this.restoreItems([this.actionTarget.id]);
         })
-        this.ActionChip('彻底删除', true, () => {
+        this.ActionChip(() => '彻底删除', true, () => {
           this.confirmPurge([this.actionTarget.id]);
         })
-        this.ActionChip('多选', false, () => this.enterSelection(this.actionTarget.id))
+        this.ActionChip(() => '多选', false, () => this.enterSelection(this.actionTarget.id))
       } else {
-        this.ActionChip('打开', false, () => {
+        this.ActionChip(() => '打开', false, () => {
           const id = this.actionTarget.id;
           this.showActions = false;
           this.onOpen(id);
         })
-        this.ActionChip('多选', false, () => this.enterSelection(this.actionTarget.id))
-        this.ActionChip(this.actionTarget.starred ? '取消星标' : '加星标', false, () => {
+        this.ActionChip(() => '多选', false, () => this.enterSelection(this.actionTarget.id))
+        this.ActionChip(() => this.actionTarget.starred ? '取消星标' : '加星标', false, () => {
           this.quickToggleStar();
         })
-        this.ActionChip(this.actionTarget.archived ? '取消归档' : '归档', false, () => {
+        this.ActionChip(() => this.actionTarget.archived ? '取消归档' : '归档', false, () => {
           this.quickToggleArchive();
         })
-        this.ActionChip(this.actionTarget.readState === ReadState.READ ? '标记未读' : '标记已读', false, () => {
+        this.ActionChip(() => this.actionTarget.readState === ReadState.READ ? '标记未读' : '标记已读', false, () => {
           this.quickToggleRead();
         })
-        this.ActionChip('删除', true, () => {
+        this.ActionChip(() => '删除', true, () => {
           this.confirmTrash([this.actionTarget.id]);
         })
       }
@@ -811,23 +845,23 @@ export struct StreamHome {
 
       Flex({ wrap: FlexWrap.Wrap }) {
         if (this.filter === StreamFilter.TRASH) {
-          this.ActionChip('恢复', false, () => {
+          this.ActionChip(() => '恢复', false, () => {
             this.restoreItems(this.selectedIds.slice());
           })
-          this.ActionChip('彻底删除', true, () => {
+          this.ActionChip(() => '彻底删除', true, () => {
             this.confirmPurge(this.selectedIds.slice());
           })
         } else {
-          this.ActionChip(this.allSelectedStarred() ? '取消星标' : '星标', false, () => {
+          this.ActionChip(() => this.starActionLabel(), false, () => {
             this.batchStar();
           })
-          this.ActionChip(this.allSelectedArchived() ? '取消归档' : '归档', false, () => {
+          this.ActionChip(() => this.archiveActionLabel(), false, () => {
             this.batchArchive();
           })
-          this.ActionChip(this.allSelectedRead() ? '标记未读' : '标记已读', false, () => {
+          this.ActionChip(() => this.readActionLabel(), false, () => {
             this.batchRead();
           })
-          this.ActionChip('删除', true, () => {
+          this.ActionChip(() => '删除', true, () => {
             this.confirmTrash(this.selectedIds.slice());
           })
         }
