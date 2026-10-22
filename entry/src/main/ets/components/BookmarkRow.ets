@@ -11,11 +11,16 @@ export struct BookmarkRow {
   @Param index: number = 0;
   @Param keyword: string = '';
   @Param selected: boolean = false;
+  @Param selectionMode: boolean = false;
+  @Param checked: boolean = false;
   @Event onOpen: (id: string) => void = (id: string) => {};
   @Event onToggleStar: (id: string, starred: boolean) => void = (id: string, starred: boolean) => {};
   @Event onMoveFocus: (delta: number) => void = (delta: number) => {};
   @Event onFocused: (index: number) => void = (index: number) => {};
+  @Event onRequestActions: (id: string) => void = (id: string) => {};
+  @Event onToggleSelect: (id: string) => void = (id: string) => {};
   @Local pressing: boolean = false;
+  private suppressClick: boolean = false;
 
   private displayTitle(): string {
     return this.bookmark.title.length > 0 ? this.bookmark.title : this.bookmark.url;
@@ -30,8 +35,48 @@ export struct BookmarkRow {
     return `${domain} · ${time}`;
   }
 
+  private requestActions(): void {
+    this.suppressClick = true;
+    setTimeout(() => {
+      this.suppressClick = false;
+    }, 400);
+    if (this.selectionMode) {
+      this.onToggleSelect(this.bookmark.id);
+      return;
+    }
+    this.onRequestActions(this.bookmark.id);
+  }
+
+  private activate(): void {
+    if (this.suppressClick) {
+      this.suppressClick = false;
+      return;
+    }
+    if (this.selectionMode) {
+      this.onToggleSelect(this.bookmark.id);
+      return;
+    }
+    this.onOpen(this.bookmark.id);
+  }
+
   build() {
     Row({ space: 10 }) {
+      if (this.selectionMode) {
+        Text(this.checked ? '✓' : '')
+          .fontSize(12)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.checked ? $r('app.color.inverse_ink') : $r('app.color.ink_tertiary'))
+          .width(20)
+          .height(20)
+          .textAlign(TextAlign.Center)
+          .border({ width: 1, color: this.checked ? $r('app.color.ink') : $r('app.color.line_strong') })
+          .borderRadius(10)
+          .backgroundColor(this.checked ? $r('app.color.ink') : Color.Transparent)
+          .margin({ top: 3 })
+          .accessibilityText(this.checked ? '已选择' : '未选择')
+          .onClick(() => this.onToggleSelect(this.bookmark.id))
+      }
+
       if (this.bookmark.readState === ReadState.UNREAD && !this.bookmark.archived) {
         Row()
           .width(2)
@@ -79,32 +124,46 @@ export struct BookmarkRow {
       })
       .onClick(() => {
         this.pressing = false;
-        this.onOpen(this.bookmark.id);
+        this.activate();
+      })
+      .gesture(
+        LongPressGesture({ repeat: false, duration: 420 })
+          .onAction(() => {
+            this.pressing = false;
+            this.requestActions();
+          })
+      )
+      .onMouse((event: MouseEvent) => {
+        if (event.button === MouseButton.Right && event.action === MouseAction.Press) {
+          this.requestActions();
+        }
       })
 
-      Button(this.bookmark.starred ? '★' : '☆')
-        .type(ButtonType.Normal)
-        .fontSize(16)
-        .fontColor(this.bookmark.starred ? $r('app.color.ink') : $r('app.color.ink_tertiary'))
-        .backgroundColor(Color.Transparent)
-        .width(32)
-        .height(44)
-        .padding(0)
-        .responseRegion({ x: -12, y: 0, width: 44, height: 44 })
-        .margin({ right: 8 })
-        .accessibilityText(this.bookmark.starred ? '取消星标' : '加星标')
-        .onClick(() => {
-          const next = !this.bookmark.starred;
-          this.bookmark.starred = next;
-          this.onToggleStar(this.bookmark.id, next);
-        })
+      if (!this.selectionMode) {
+        Button(this.bookmark.starred ? '★' : '☆')
+          .type(ButtonType.Normal)
+          .fontSize(16)
+          .fontColor(this.bookmark.starred ? $r('app.color.ink') : $r('app.color.ink_tertiary'))
+          .backgroundColor(Color.Transparent)
+          .width(32)
+          .height(44)
+          .padding(0)
+          .responseRegion({ x: -12, y: 0, width: 44, height: 44 })
+          .margin({ right: 8 })
+          .accessibilityText(this.bookmark.starred ? '取消星标' : '加星标')
+          .onClick(() => {
+            const next = !this.bookmark.starred;
+            this.bookmark.starred = next;
+            this.onToggleStar(this.bookmark.id, next);
+          })
+      }
     }
     .id(`bookmark-row-${this.bookmark.id}`)
     .width('100%')
     .constraintSize({ minHeight: 44 })
     .padding({ left: 20, right: 24, top: 16, bottom: 16 })
     .alignItems(VerticalAlign.Top)
-    .backgroundColor(this.pressing || this.selected ? $r('app.color.surface_alt') : Color.Transparent)
+    .backgroundColor(this.pressing || this.selected || this.checked ? $r('app.color.surface_alt') : Color.Transparent)
     .accessibilityText(`${this.displayTitle()}，${this.subtitle()}`)
     .focusable(true)
     .onFocus(() => {
@@ -115,7 +174,7 @@ export struct BookmarkRow {
         return;
       }
       if (event.keyCode === KeyCode.KEYCODE_ENTER || event.keyCode === KeyCode.KEYCODE_SPACE) {
-        this.onOpen(this.bookmark.id);
+        this.activate();
       } else if (event.keyCode === KeyCode.KEYCODE_DPAD_UP) {
         this.onMoveFocus(-1);
       } else if (event.keyCode === KeyCode.KEYCODE_DPAD_DOWN) {

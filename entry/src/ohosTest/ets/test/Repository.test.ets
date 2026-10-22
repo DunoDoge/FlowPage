@@ -278,6 +278,67 @@ export default function repositoryTest() {
       }
     });
 
+    it('appliesBatchMutationsInOnePass', 0, async () => {
+      const dao = new BookmarkDao();
+      const first = Bookmark.create('https://example.com/batch-a', '批次甲', BookmarkSource.MANUAL);
+      const second = Bookmark.create('https://example.com/batch-b', '批次乙', BookmarkSource.MANUAL);
+      const third = Bookmark.create('https://example.com/batch-c', '批次丙', BookmarkSource.MANUAL);
+      const batch: Bookmark[] = [first, second, third];
+      await dao.insertBatch(batch);
+      const before = await dao.findById(first.id);
+      expect(before === undefined).assertFalse();
+      const ids: string[] = [first.id, second.id];
+
+      await FlowRepository.get().setStarredMany(ids, true);
+      await FlowRepository.get().setArchivedMany(ids, true);
+      await FlowRepository.get().setReadMany(ids, ReadState.READ);
+      let loaded = await dao.findById(first.id);
+      expect(loaded === undefined).assertFalse();
+      if (loaded !== undefined && before !== undefined) {
+        expect(loaded.starred).assertTrue();
+        expect(loaded.archived).assertTrue();
+        expect(loaded.readState).assertEqual(ReadState.READ);
+        expect(loaded.readAt > 0).assertTrue();
+        expect(loaded.rev).assertEqual(before.rev + 3);
+      }
+      const untouched = await dao.findById(third.id);
+      expect(untouched === undefined).assertFalse();
+      if (untouched !== undefined) {
+        expect(untouched.starred).assertFalse();
+        expect(untouched.archived).assertFalse();
+      }
+
+      await FlowRepository.get().setReadMany([first.id], ReadState.UNREAD);
+      loaded = await dao.findById(first.id);
+      if (loaded !== undefined) {
+        expect(loaded.readState).assertEqual(ReadState.UNREAD);
+        expect(loaded.readAt).assertEqual(0);
+      }
+
+      await FlowRepository.get().deleteMany(ids);
+      let all = await dao.listAll(true);
+      expect(all.length).assertEqual(3);
+      for (let i = 0; i < all.length; i++) {
+        if (all[i].id === first.id || all[i].id === second.id) {
+          expect(all[i].deleted).assertTrue();
+        } else {
+          expect(all[i].deleted).assertFalse();
+        }
+      }
+
+      await FlowRepository.get().restoreMany(ids);
+      all = await dao.listAll(true);
+      for (let i = 0; i < all.length; i++) {
+        expect(all[i].deleted).assertFalse();
+      }
+
+      await FlowRepository.get().purgeMany(ids);
+      const remaining = await dao.listAll(true);
+      expect(remaining.length).assertEqual(1);
+      expect(remaining[0].id).assertEqual(third.id);
+      expect((await dao.listTombstones()).length).assertEqual(2);
+    });
+
     it('persistsAutoSnapshotSetting', 0, async () => {
       if (context === undefined) {
         expect(context === undefined).assertFalse();

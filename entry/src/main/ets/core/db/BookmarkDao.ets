@@ -494,11 +494,41 @@ export class BookmarkDao {
     await store.insert('conflict', values);
   }
 
+  // prefix ends with "WHERE id"; ids are appended as IN (...) in chunks.
+  private async updateMany(prefix: string, leading: relationalStore.ValueType[], ids: string[]): Promise<void> {
+    if (ids.length === 0) {
+      return;
+    }
+    const store = Database.getStore();
+    const chunk = 200;
+    for (let start = 0; start < ids.length; start = start + chunk) {
+      const end = start + chunk < ids.length ? start + chunk : ids.length;
+      const placeholders: string[] = [];
+      const args: relationalStore.ValueType[] = [];
+      for (let i = 0; i < leading.length; i++) {
+        args.push(leading[i]);
+      }
+      for (let i = start; i < end; i++) {
+        placeholders.push('?');
+        args.push(ids[i]);
+      }
+      await store.executeSql(`${prefix} IN (${placeholders.join(',')})`, args);
+    }
+  }
+
   async setStarred(id: string, starred: boolean): Promise<void> {
     const store = Database.getStore();
     await store.executeSql(
       'UPDATE bookmark SET starred = ?, updated_at = ?, rev = rev + 1, dirty = 1 WHERE id = ?',
       [starred ? 1 : 0, Date.now(), id]
+    );
+  }
+
+  async setStarredMany(ids: string[], starred: boolean): Promise<void> {
+    await this.updateMany(
+      'UPDATE bookmark SET starred = ?, updated_at = ?, rev = rev + 1, dirty = 1 WHERE id',
+      [starred ? 1 : 0, Date.now()],
+      ids
     );
   }
 
@@ -510,12 +540,29 @@ export class BookmarkDao {
     );
   }
 
+  async setArchivedMany(ids: string[], archived: boolean): Promise<void> {
+    await this.updateMany(
+      'UPDATE bookmark SET archived = ?, updated_at = ?, rev = rev + 1, dirty = 1 WHERE id',
+      [archived ? 1 : 0, Date.now()],
+      ids
+    );
+  }
+
   async setReadState(id: string, readState: number): Promise<void> {
     const store = Database.getStore();
     const readAt = readState === 2 ? Date.now() : 0;
     await store.executeSql(
       'UPDATE bookmark SET read_state = ?, read_at = ?, updated_at = ?, rev = rev + 1, dirty = 1 WHERE id = ?',
       [readState, readAt, Date.now(), id]
+    );
+  }
+
+  async setReadStateMany(ids: string[], readState: number): Promise<void> {
+    const readAt = readState === 2 ? Date.now() : 0;
+    await this.updateMany(
+      'UPDATE bookmark SET read_state = ?, read_at = ?, updated_at = ?, rev = rev + 1, dirty = 1 WHERE id',
+      [readState, readAt, Date.now()],
+      ids
     );
   }
 
@@ -590,11 +637,27 @@ export class BookmarkDao {
     );
   }
 
+  async softDeleteMany(ids: string[]): Promise<void> {
+    await this.updateMany(
+      'UPDATE bookmark SET deleted = 1, updated_at = ?, rev = rev + 1, dirty = 1 WHERE id',
+      [Date.now()],
+      ids
+    );
+  }
+
   async restore(id: string): Promise<void> {
     const store = Database.getStore();
     await store.executeSql(
       'UPDATE bookmark SET deleted = 0, updated_at = ?, rev = rev + 1, dirty = 1 WHERE id = ?',
       [Date.now(), id]
+    );
+  }
+
+  async restoreMany(ids: string[]): Promise<void> {
+    await this.updateMany(
+      'UPDATE bookmark SET deleted = 0, updated_at = ?, rev = rev + 1, dirty = 1 WHERE id',
+      [Date.now()],
+      ids
     );
   }
 

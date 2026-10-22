@@ -376,13 +376,37 @@ export class FlowRepository {
     this.notify();
   }
 
+  async setStarredMany(ids: string[], starred: boolean): Promise<void> {
+    if (ids.length === 0) {
+      return;
+    }
+    await this.dao.setStarredMany(ids, starred);
+    this.notify();
+  }
+
   async setArchived(id: string, archived: boolean): Promise<void> {
     await this.dao.setArchived(id, archived);
     this.notify();
   }
 
+  async setArchivedMany(ids: string[], archived: boolean): Promise<void> {
+    if (ids.length === 0) {
+      return;
+    }
+    await this.dao.setArchivedMany(ids, archived);
+    this.notify();
+  }
+
   async setRead(id: string, state: number): Promise<void> {
     await this.dao.setReadState(id, state);
+    this.notify();
+  }
+
+  async setReadMany(ids: string[], state: number): Promise<void> {
+    if (ids.length === 0) {
+      return;
+    }
+    await this.dao.setReadStateMany(ids, state);
     this.notify();
   }
 
@@ -427,12 +451,28 @@ export class FlowRepository {
     this.notify();
   }
 
+  async deleteMany(ids: string[]): Promise<void> {
+    if (ids.length === 0) {
+      return;
+    }
+    await this.dao.softDeleteMany(ids);
+    this.notify();
+  }
+
   async restore(id: string): Promise<void> {
     await this.dao.restore(id);
     this.notify();
   }
 
-  async purge(id: string): Promise<void> {
+  async restoreMany(ids: string[]): Promise<void> {
+    if (ids.length === 0) {
+      return;
+    }
+    await this.dao.restoreMany(ids);
+    this.notify();
+  }
+
+  private async purgeOne(id: string): Promise<void> {
     const bookmark = await this.dao.findById(id);
     if (bookmark !== undefined) {
       SnapshotStore.remove(bookmark.snapshotPath);
@@ -441,20 +481,27 @@ export class FlowRepository {
       SnapshotStore.removeById(this.context, id);
     }
     await this.dao.purge(id);
+  }
+
+  async purge(id: string): Promise<void> {
+    await this.purgeOne(id);
+    this.notify();
+  }
+
+  async purgeMany(ids: string[]): Promise<void> {
+    if (ids.length === 0) {
+      return;
+    }
+    for (let i = 0; i < ids.length; i++) {
+      await this.purgeOne(ids[i]);
+    }
     this.notify();
   }
 
   async purgeExpired(): Promise<number> {
     const ids = await this.dao.listExpiredIds(30);
     for (let i = 0; i < ids.length; i++) {
-      const bookmark = await this.dao.findById(ids[i]);
-      if (bookmark !== undefined) {
-        SnapshotStore.remove(bookmark.snapshotPath);
-      }
-      if (this.context !== undefined) {
-        SnapshotStore.removeById(this.context, ids[i]);
-      }
-      await this.dao.purge(ids[i]);
+      await this.purgeOne(ids[i]);
     }
     if (ids.length > 0) {
       this.notify();
