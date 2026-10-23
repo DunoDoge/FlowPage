@@ -13,7 +13,7 @@
 | 状态 | `@ObservedV2` + `@Trace` + `@ComponentV2` + `@Local` / `@Param` / `@Event` / `@Monitor` |
 | 数据 | RDB `flowpage.db`（6 表 + 7 索引）、preferences、`filesDir/snapshots/*.txt` |
 | 同步 | WebDAV（Basic Auth），ETag 增量 + LWW；无分布式 KV、无账号体系 |
-| 测试 | `@ohos/hypium`，`entry/src/ohosTest` 11 个套件 / 106 个用例，仅设备端 |
+| 测试 | `@ohos/hypium`，`entry/src/ohosTest` 11 个套件 / 119 个用例，仅设备端 |
 
 ## 构建与验证（顺序有讲究）
 
@@ -58,7 +58,7 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
                                       ▼
                           FlowRepository（单例，UI 只依赖它）
                            ├─ BookmarkDao + Database（RDB）
-                           ├─ MetadataService / SnapshotStore
+                           ├─ MetadataService / SnapshotStore / ReaderPageLoader
                            ├─ SyncEngine + WebDavTransport
                            └─ CardPublisher / CardSnapshot
 ```
@@ -72,7 +72,13 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   `removePreferencesFromCacheSync`，否则读到旧快照。`FlowRepository.notify()` 已做“写快照 + 推送”串行合并。
 - 所有 URL 先经 `normalizeUrl()`：补 `https://`、小写 host、去 fragment、去跟踪参数、query 排序；`url_key`
   唯一索引负责去重。新增入口不要自己比较原始字符串。
-- 正文快照是 `filesDir/snapshots/<id>.txt` 的结构化文本（`FLOWPAGE-ARTICLE-1` 版本头），**不上传同步**；同步只传链接、元数据、标签和状态。阅读位置存本机 `flowpage_reader`，不参与同步。
+- 正文快照是 `filesDir/snapshots/<id>.txt` 的结构化文本（`FLOWPAGE-ARTICLE-2` 版本头，每块第三字段是
+  `start,end,encodeURIComponent(url)` 链接区间），**不上传同步**；同步只传链接、元数据、标签和状态。
+  `FLOWPAGE-ARTICLE-1` 仍可读但无链接；旧文章需“重新抓取”。根书签阅读位置存本机 `flowpage_reader`，不参与同步。
+- 阅读/浏览器统一走 `Index` 根部的 `bindContentCover` + `ReadingShell`，不要往 `main_pages.json` 加路由；
+  临时链接页不写 RDB/快照/`flowpage_reader`，只保留在 `ReadingEntry` 内存栈中。正文链接点击 → 原生抓取
+  （`ReaderPageLoader`）→ 临时阅读页；非文档链接 → 内置 `Web`。浏览器「阅读」用
+  `runJavaScriptExt('document.body.innerHTML')` 提取实时 DOM，同样复用 `ArticleExtractor`。
 - 删除语义：软删除 `deleted=1` 保留 30 天；彻底删除/过期清理会写 `tombstone`，同步先传墓碑再删远端文件。
   墓碑是“不复活”的唯一保障，任何清理路径都不能跳过 `addTombstone`。
 - 上传竞态：PUT 前记录 `rev + updatedAt`，成功后仅当仍匹配才回填 ETag 并清 `dirty`；不匹配说明同步期间
@@ -81,6 +87,22 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   并在 `Database.applySchema()` 的 `addColumn()` 列表补一条吞异常的 `ALTER TABLE`（现有 `dirty` /
   `link_status` / `link_checked_at` / `domain` 即此模式）；`SyncStoreTest` 用旧表结构验证迁移幂等。
 
+## 性能约束（阅读页）
+
+- **禁止在 UI 线程循环调用 `ArticleExtractor.extract()`**。阅读页链路（`ReaderPageLoader.load()`、
+  `ReadingShell.extractFromWeb()`）必须走 `ArticleExtractService.extractAsync()`（taskpool，4 s 超时 + 同步回退）；
+  同步抽取只留给 `applyMetadata()` 这类一次性后台任务。`ArticleDocument` 不是 Sendable，跨线程只传 HTML 与
+  `ArticleCodec` 字符串。
+- 热点正则必须模块级复用（`ArticleExtractor`、`MetadataService` 均如此），不要在函数内 `new RegExp`
+  或堆重复 `replace` 链；改动抽取器后要复测耗时。
+- transient 页性能预算（Pura 70 / 648 块 / 101,620 字符）：首屏布局 ≤ 600 ms，单次「点击链接→新页可读」
+  ≤ 1.7 s。`ReaderView` 首屏 `INITIAL_BLOCKS=200`、每次 `BLOCK_BATCH=200`，**不要**一次挂载整篇
+  （实测 648 块一次挂载约 3 s、VmRSS 553 MB）；改窗口/恢复/搜索逻辑后要复测
+  `uitest dumpLayout` 节点数、`VmRSS` 与 1/5/10/20 次下钻。
+- 改 `ReaderView` 必须保留：目录、进度、位置恢复（含窗口外块）、搜索命中、链接点击、临时页「收藏这一页」。
+- 判断主线程阻塞用 20 ms `setInterval` 心跳并记录最大间隔；只看 hilog 阶段时间戳会把「上一页拆解/GC」
+  误判成网络耗时。
+
 ## 代码约定
 
 - ArkTS 严格子集：禁止 `any`、`as` 断言、结构化类型、动态属性访问；对象字面量必须有显式类型上下文。
@@ -88,6 +110,11 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   `common/PlatformError.ets`），新增业务代码不要再用 `as`。
 - 主 UI 统一 V2 装饰器；**只有** `entry/src/main/ets/widget/pages/` 的桌面卡片使用 V1
   `@Component` + `@LocalStorageProp`（FormKit 约束），不要混用。
+- 动态文案不要只放在带参 `@Builder` 里：实测 `ReadingShell` 的「网页/阅读」标签在模式切换后会残留旧值，
+  改为直接内联 `Text` 或提升到 `@Local` 状态；其余带参 builder 的静态文案不受影响。
+- 内置 Web 复用 `INTERNET` 权限，不要新增权限；`target=_blank`/`window.open` 用
+  `javaScriptOnDocumentStart` 中和，ArkTS 不能给 `ControllerHandler.setWebController` 传 `null`。
+  离开浏览模式后 Web 会卸载，调用 `WebviewController` 前必须检查 `webMounted`。
 - 颜色一律 `$r('app.color.*')`（`resources/base|dark/element/color.json` 成对维护）。当前没有 i18n 层，
   页面文案是内联中文，只有应用名/Ability 标签在 `string.json`。
 - 日志 `hilog`，domain `0x0000`，TAG `'flowpage'`。

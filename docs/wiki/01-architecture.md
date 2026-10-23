@@ -80,6 +80,7 @@ common/（AppState、URL/日期工具、枚举）与 model/（数据模型）
 | `refreshTick` | 数据版本号；`StreamHome`、`TagsPage`、`SyncPage`、`SettingsPage` 用 `@Monitor` 监听后重载 |
 | `tagFilter` | 标签页到首页的筛选条件 |
 | `inboxUrl` / `showInbox` | 收笺面板开关与预填 URL |
+| `readingOpen` / `readingTick` / `readingBackTick` / `readingCanGoBack` | `ReadingShell` 覆盖层开关、重新播种、返回请求与根部判断 |
 | `toastText` | 2.4 秒后自动清除的轻提示 |
 
 **写路径必须单调**：UI → `FlowRepository` → DAO/服务 → `notify()`。
@@ -110,6 +111,13 @@ InboxSheet / SharePage
 「标记已读」后进入 `READ`，也可「标记未读」。正文快照按 `snapshotStatus` 懒加载并分段渲染。
 编辑保存走 `FlowRepository.saveEdits()`：`title/note/excerpt/tags` 在同一个 DAO 事务内写入，只 `rev+1`、
 只 `notify()` 一次。
+
+「专注阅读」不再由 `DetailContent` 自己开模态，而是通过 `AppState.openReading(seed)` 打开 `Index` 根部的
+`ReadingShell`。`ReadingShell` 维护 `ReadingEntry` 栈：
+
+- 正文链接 → `ReaderPageLoader` 原生抓取 → push 临时阅读页；非文档链接直接进内置 `Web`。
+- 临时页不写 RDB/快照/`flowpage_reader`；根书签的已读/摘录仍走 Repository。
+- 系统返回/ESC 由 ContentCover `onWillDismiss` 转为 `readingBackTick`，先回退栈，根部才关闭覆盖层。
 
 ### 4.3 同步
 

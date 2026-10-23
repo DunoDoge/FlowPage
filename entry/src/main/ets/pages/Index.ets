@@ -12,6 +12,7 @@ import { SideNav } from '../components/NavigationRail';
 import { TagsPage } from './TagsPage';
 import { SyncPage } from './SyncPage';
 import { SettingsPage } from './SettingsPage';
+import { ReadingShell } from '../components/ReadingShell';
 
 @Entry
 @ComponentV2
@@ -162,6 +163,29 @@ struct Index {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.paper'))
+    .bindContentCover(this.appState.readingOpen, this.ReadingCover(), {
+      enableSafeArea: true,
+      onWillDismiss: (action: DismissContentCoverAction) => {
+        if (this.appState.readingCanGoBack && action.reason === DismissReason.PRESS_BACK) {
+          this.appState.requestReadingBack();
+        } else {
+          action.dismiss();
+        }
+      },
+      onDisappear: () => {
+        this.appState.closeReading();
+      }
+    })
+  }
+
+  @Builder
+  ReadingCover() {
+    ReadingShell({
+      compact: !this.isWide,
+      onClose: () => {
+        this.appState.closeReading();
+      }
+    })
   }
 
   @Builder

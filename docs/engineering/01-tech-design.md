@@ -300,7 +300,7 @@ CREATE TABLE IF NOT EXISTS tombstone (
 - 上限 204800 字符（按字符计，不按 UTF-8 字节；常量名沿用 `Limits.snapshotBytes`），存 `files/snapshots/{id}.txt`；RDB 只存路径与 400 字内描述。
 - 失败不影响收笺。
 
-**当前实现（2026-10-22，结构化快照 + 原生阅读器）**
+**当前实现（2026-10-22，结构化快照 + 原生阅读器 + 链接阅读/内置浏览器）**
 
 - `ArticleExtractor` 从同一份元数据 HTML 中提取正文块（heading / paragraph / quote / listItem / code），
   在 `<article>` / `<main>` / 正文 class/id 容器 / `<body>` 中选覆盖足够的候选：所有候选都需覆盖清理后的
@@ -312,12 +312,22 @@ CREATE TABLE IF NOT EXISTS tombstone (
   和未命名评论包在一起，不算竞争容器；未被命名的 `<div>`（如评论）同样不算，此时保守保留 teaser，优先不丢正文。`post-meta` / `entry-meta` / `post-header` 等命名同样按 token 作为噪声移除，候选过小时回退
   `<body>`；保留 `<article>` 与 `<main>` 内 `<header>` 的导语，同时剔除导航、页脚、评论、分享、广告等噪声。
   标题去重先剥离站点后缀并支持 CJK 短标题前缀比较。
-- `ArticleCodec` 把块编码为带 `FLOWPAGE-ARTICLE-1` 版本头的文本，仍存
-  `files/snapshots/<id>.txt`；旧纯文本快照读取时降级为段落。正文仍不上传同步。
-- `ReaderView` 提供行内与全屏两种形态：全屏使用 `bindContentCover`；支持字号/行距/段距、TOC、
-  正文搜索与高亮、选中存摘录、阅读进度和按书签恢复位置；进度 ≥90% 标记已读。
-- 阅读偏好存 `flowpage_settings`，阅读位置存本机 `flowpage_reader`，不新增同步字段。
-- 内置浏览器（`Web` 组件 + 在线注入提取）仍未实现，保留为后续增强。
+- `ArticleCodec` 把块编码为带 `FLOWPAGE-ARTICLE-2` 版本头的文本，存
+  `files/snapshots/<id>.txt`；每块第三字段为链接区间 `start,end,encodeURIComponent(url)`，旧
+  `FLOWPAGE-ARTICLE-1`/纯文本快照读取时降级为无链接段落。正文仍不上传同步。
+- `ArticleExtractor` 同时记录 `<a>` 的文本区间：扫描时插入私有标记，清理后计算偏移；相对链接用
+  `resolveHttpUrl()` 结合页面 `<base href>` 解析，只保留 http(s)。
+- `ReaderView` 提供行内与全屏两种形态：全屏由 `ReadingShell` 的 ContentCover 承载；链接用 `Span` +
+  `onClick` 呈现（下划线 + 墨色，不新增彩色 token）；支持字号/行距/段距、TOC、正文搜索与高亮、
+  选中存摘录、阅读进度和按书签恢复位置；进度 ≥90% 标记已读。
+- `ReadingShell` 维护 `ReadingEntry` 阅读栈：正文链接原生抓取后 push 临时页，非文档链接直接进内置
+  Web；临时页不写 RDB/`flowpage_reader`，菜单与正文底部可「收藏这一页」。
+- 内置浏览器为单标签 `Web`：地址可编辑、前进/后退/刷新、进度与错误态；「阅读」用
+  `runJavaScriptExt` 取实时 DOM 后复用 `ArticleExtractor`；`javaScriptOnDocumentStart` 中和
+  `window.open`/`target`，仅允许 http(s) 主框架导航。
+- 阅读偏好存 `flowpage_settings`，根书签阅读位置存本机 `flowpage_reader`，不新增同步字段。
+- 系统返回/ESC 由 ContentCover `onWillDismiss(reason=PRESS_BACK)` 转为 `readingBackTick`，先回退阅读栈，
+  根部才关闭覆盖层。
 
 ### 5.6 服务卡片
 
@@ -506,7 +516,7 @@ sync():
 
 ### 8.1 单元测试（Hypium）
 
-设备端在 `entry/src/ohosTest`，当前 11 个套件 / 106 个用例：
+设备端在 `entry/src/ohosTest`，当前 11 个套件 / 119 个用例：
 
 | 套件 | 覆盖 |
 |---|---|

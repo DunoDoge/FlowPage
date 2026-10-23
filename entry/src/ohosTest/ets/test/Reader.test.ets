@@ -1,7 +1,11 @@
 import { describe, it, expect } from '@ohos/hypium';
-import { ArticleBlock, ArticleBlockType, ArticleDocument } from '../../../main/ets/model/Article';
+import { ArticleBlock, ArticleBlockType, ArticleDocument, ArticleLink } from '../../../main/ets/model/Article';
 import { ArticleSignature } from '../../../main/ets/common/ArticleSignature';
 import { ArticleExtractor } from '../../../main/ets/core/parser/ArticleExtractor';
+import { ArticleCodec } from '../../../main/ets/core/service/ArticleCodec';
+import { ReaderSegment, readerSegments } from '../../../main/ets/common/ReaderSegments';
+import { resolveHttpUrl } from '../../../main/ets/common/UrlUtil';
+import { decodeWebHtml } from '../../../main/ets/common/WebHtmlCodec';
 import { readerBlockProgress, readerProgressRatio } from '../../../main/ets/common/ReaderProgress';
 import {
   classifyMetadataWrite,
@@ -32,6 +36,14 @@ function countExactBlocks(document: ArticleDocument, text: string): number {
     }
   }
   return count;
+}
+
+function joinedReaderSegments(segments: ReaderSegment[]): string {
+  let text = '';
+  for (let i = 0; i < segments.length; i++) {
+    text = text + segments[i].text;
+  }
+  return text;
 }
 
 export default function readerTest() {
@@ -296,6 +308,152 @@ export default function readerTest() {
       expect(readerBlockProgress(5, 11)).assertEqual(0.5);
       expect(readerBlockProgress(10, 11)).assertEqual(0.99);
       expect(readerBlockProgress(3, 1)).assertEqual(0);
+    });
+
+    it('capturesAbsoluteLinksAndOffsets', 0, () => {
+      const html = '<article><p>看<a href="https://example.com/a">这里</a>。</p></article>';
+      const document = ArticleExtractor.extract(html);
+      expect(document.blocks.length).assertEqual(1);
+      expect(document.blocks[0].text).assertEqual('看这里。');
+      expect(document.blocks[0].links.length).assertEqual(1);
+      expect(document.blocks[0].links[0].start).assertEqual(1);
+      expect(document.blocks[0].links[0].end).assertEqual(3);
+      expect(document.blocks[0].links[0].url).assertEqual('https://example.com/a');
+    });
+
+    it('resolvesRelativeLinksAgainstBaseUrl', 0, () => {
+      const html = '<article><p>去<a href="/docs?x=1&amp;y=2">文档</a></p></article>';
+      const document = ArticleExtractor.extract(html, '', 'https://example.com/dir/page');
+      expect(document.blocks[0].links.length).assertEqual(1);
+      expect(document.blocks[0].links[0].url).assertEqual('https://example.com/docs?x=1&y=2');
+    });
+
+    it('dropsUnsafeAndFragmentLinks', 0, () => {
+      const html = '<p><a href="javascript:alert(1)">a</a>' +
+        '<a href="mailto:x@y.com">b</a><a href="#top">c</a><a href="/rel">d</a></p>';
+      const document = ArticleExtractor.extract(html);
+      expect(document.blocks[0].text).assertEqual('abcd');
+      expect(document.blocks[0].links.length).assertEqual(0);
+    });
+
+    it('keepsCodeBlocksLinkFree', 0, () => {
+      const document = ArticleExtractor.extract('<pre><a href="https://example.com">code</a></pre>');
+      expect(document.blocks.length).assertEqual(1);
+      expect(document.blocks[0].type).assertEqual(ArticleBlockType.CODE);
+      expect(document.blocks[0].text).assertEqual('code');
+      expect(document.blocks[0].links.length).assertEqual(0);
+    });
+
+    it('spansLinksAcrossBreaksAndEntities', 0, () => {
+      const html = '<p><a href="https://example.com/x">第一行<br>第二行 &amp; 结束</a></p>';
+      const document = ArticleExtractor.extract(html);
+      const text = document.blocks[0].text;
+      expect(text).assertEqual('第一行\n第二行 & 结束');
+      expect(document.blocks[0].links.length).assertEqual(1);
+      expect(document.blocks[0].links[0].start).assertEqual(0);
+      expect(document.blocks[0].links[0].end).assertEqual(text.length);
+    });
+
+    it('doesNotLeakLinkMarkersIntoText', 0, () => {
+      const document = ArticleExtractor.extract('<p>前<a href="https://example.com">中</a>后</p>');
+      const text = document.blocks[0].text;
+      expect(text).assertEqual('前中后');
+      expect(text.indexOf('\uE010')).assertEqual(-1);
+      expect(text.indexOf('\uE011')).assertEqual(-1);
+      expect(text.indexOf('\uE012')).assertEqual(-1);
+    });
+
+    it('keepsLinksInHeadingsAndLists', 0, () => {
+      const html = '<article><h2><a href="https://example.com">标题</a></h2>' +
+        '<ul><li><a href="https://example.com/2">项</a></li></ul></article>';
+      const document = ArticleExtractor.extract(html);
+      expect(document.blocks[0].type).assertEqual(ArticleBlockType.HEADING);
+      expect(document.blocks[0].links.length).assertEqual(1);
+      expect(document.blocks[1].type).assertEqual(ArticleBlockType.LIST_ITEM);
+      expect(document.blocks[1].links.length).assertEqual(1);
+    });
+
+    it('roundTripsLinksThroughSnapshotCodec', 0, () => {
+      const document = new ArticleDocument();
+      const block = ArticleBlock.of(ArticleBlockType.PARAGRAPH, 0, '看这里。');
+      block.links = [ArticleLink.of(1, 3, 'https://example.com/a?x=1&y=2')];
+      document.blocks = [block];
+      const encoded = ArticleCodec.encode(document);
+      expect(encoded.indexOf('FLOWPAGE-ARTICLE-2')).assertEqual(0);
+      const decoded = ArticleCodec.decode(encoded);
+      expect(decoded.blocks.length).assertEqual(1);
+      expect(decoded.blocks[0].text).assertEqual('看这里。');
+      expect(decoded.blocks[0].links.length).assertEqual(1);
+      expect(decoded.blocks[0].links[0].start).assertEqual(1);
+      expect(decoded.blocks[0].links[0].end).assertEqual(3);
+      expect(decoded.blocks[0].links[0].url).assertEqual('https://example.com/a?x=1&y=2');
+    });
+
+    it('decodesV1SnapshotWithoutLinks', 0, () => {
+      const decoded = ArticleCodec.decode('FLOWPAGE-ARTICLE-1\np\t旧正文');
+      expect(decoded.blocks.length).assertEqual(1);
+      expect(decoded.blocks[0].text).assertEqual('旧正文');
+      expect(decoded.blocks[0].links.length).assertEqual(0);
+    });
+
+    it('clampsLinksWhenTruncating', 0, () => {
+      const document = new ArticleDocument();
+      const block = ArticleBlock.of(ArticleBlockType.PARAGRAPH, 0, 'abcdefghij');
+      block.links = [
+        ArticleLink.of(2, 6, 'https://a.example'),
+        ArticleLink.of(8, 10, 'https://b.example')
+      ];
+      document.blocks = [block];
+      document.truncate(7);
+      expect(document.blocks.length).assertEqual(1);
+      expect(document.blocks[0].text).assertEqual('abcdefg');
+      expect(document.blocks[0].links.length).assertEqual(1);
+      expect(document.blocks[0].links[0].end).assertEqual(6);
+    });
+
+    it('splitsLinksAndSearchMatches', 0, () => {
+      const segments = readerSegments(
+        '看这里和那里',
+        [ArticleLink.of(1, 3, 'https://example.com/a')],
+        '里和'
+      );
+      expect(joinedReaderSegments(segments)).assertEqual('看这里和那里');
+      let matchedLink = false;
+      for (let i = 0; i < segments.length; i++) {
+        if (segments[i].url.length > 0 && segments[i].matched) {
+          matchedLink = true;
+        }
+      }
+      expect(matchedLink).assertTrue();
+    });
+
+    it('decodesEscapedHtmlFromWebView', 0, () => {
+      const escaped = '\\u003Carticle\\u003E\\u003Ch1\\u003E标题\\u003C/h1\\u003E' +
+        '\\u003Cp\\u003E正文\\u003Ca href=\\"https://example.com/a\\"\\u003E链接\\u003C/a\\u003E\\u003C/p\\u003E' +
+        '\\u003C/article\\u003E';
+      const html = decodeWebHtml(escaped);
+      expect(html.indexOf('\\u003C')).assertEqual(-1);
+      expect(html.indexOf('<article>')).assertEqual(0);
+      const document = ArticleExtractor.extract(html, '标题', 'https://example.com/start');
+      expect(document.blocks.length > 0).assertTrue();
+      let joined = '';
+      for (let i = 0; i < document.blocks.length; i++) {
+        joined = `${joined}${document.blocks[i].text}`;
+      }
+      expect(joined.indexOf('<')).assertEqual(-1);
+      expect(joined.indexOf('正文') >= 0).assertTrue();
+      expect(joined.indexOf('链接') >= 0).assertTrue();
+      expect(decodeWebHtml('<p>无转义 \\ 文本</p>')).assertEqual('<p>无转义 \\ 文本</p>');
+      expect(decodeWebHtml('\\u003Cp\\u003Ea\\nb\\u003C/p\\u003E')).assertEqual('<p>a\\nb</p>');
+      expect(decodeWebHtml('\\u003Cp\\u003E\\u12zz\\u003C/p\\u003E')).assertEqual('<p>\\u12zz</p>');
+      expect(decodeWebHtml('<p>say \\"hi\\"</p>')).assertEqual('<p>say \\"hi\\"</p>');
+    });
+
+    it('resolvesHttpUrlsSafely', 0, () => {
+      expect(resolveHttpUrl('https://example.com/a/b', '../c')).assertEqual('https://example.com/c');
+      expect(resolveHttpUrl('https://example.com', 'javascript:void(0)')).assertEqual('');
+      expect(resolveHttpUrl('https://example.com', '#top')).assertEqual('');
+      expect(resolveHttpUrl('', '/relative')).assertEqual('');
     });
   });
 }

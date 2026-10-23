@@ -19,3 +19,4 @@ local.properties
 *.cer
 *.key
 .DS_Store
+/.deveco

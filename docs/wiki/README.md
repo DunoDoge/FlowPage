@@ -30,7 +30,7 @@ ArkTS + ArkUI 声明式 UI，状态管理 V2；本地 RDB 是唯一事实源，W
 | UI | ArkTS + ArkUI，`@ComponentV2` / `@ObservedV2`；只有卡片用 V1 |
 | 数据 | RDB `flowpage.db`：bookmark / tag / bookmark_tag / conflict / sync_state / tombstone |
 | 同步 | WebDAV Basic Auth，`FlowPage/v1/` 布局，ETag + LWW + 墓碑 |
-| 测试 | Hypium 设备端 4 套件 / 30 用例 |
+| 测试 | Hypium 设备端 11 套件 / 119 用例 |
 
 ## 功能与实现入口
 
@@ -38,6 +38,7 @@ ArkTS + ArkUI 声明式 UI，状态管理 V2；本地 RDB 是唯一事实源，W
 |---|---|
 | 首页流、筛选、搜索 | [StreamHome.ets](../../entry/src/main/ets/components/StreamHome.ets) + [BookmarkRow.ets](../../entry/src/main/ets/components/BookmarkRow.ets) |
 | 详情阅读 / 编辑 / 操作 | [DetailContent.ets](../../entry/src/main/ets/components/DetailContent.ets) |
+| 专注阅读 / 正文链接 / 内置浏览 | [ReadingShell.ets](../../entry/src/main/ets/components/ReadingShell.ets) + [ReaderView.ets](../../entry/src/main/ets/components/ReaderView.ets) |
 | 手动收笺与粘贴 | [InboxSheet.ets](../../entry/src/main/ets/components/InboxSheet.ets) |
 | 系统分享收笺 | [ShareAbility.ets](../../entry/src/main/ets/shareability/ShareAbility.ets) → [SharePage.ets](../../entry/src/main/ets/pages/SharePage.ets) |
 | 标签管理 | [TagsPage.ets](../../entry/src/main/ets/pages/TagsPage.ets) |
@@ -55,14 +56,14 @@ entry/src/main/ets/
 ├── shareability/     ShareExtensionAbility
 ├── formability/      FormExtensionAbility（服务卡片）
 ├── pages/            Index、SharePage（仅有的两个页面路由）；其余页面是组件
-├── components/       StreamHome、DetailContent、InboxSheet、BookmarkRow、SideNav
-├── common/           AppState、Constants、UrlUtil、DateUtil
-├── model/            Bookmark、Tag、Tombstone、导入与元数据结果
+├── components/       StreamHome、DetailContent、ReaderView、ReadingShell、InboxSheet、BookmarkRow、SideNav
+├── common/           AppState、Constants、UrlUtil、ReaderSegments、ReaderPrefs、DateUtil
+├── model/            Bookmark、Tag、Tombstone、Article、ReadingEntry、导入与元数据结果
 ├── repository/       FlowRepository（单例）
 ├── core/db/          Database、BookmarkDao
-├── core/service/     MetadataService、SnapshotStore、CardSnapshot、CardPublisher
+├── core/service/     MetadataService、SnapshotStore、ArticleCodec、ReaderPageLoader、CardSnapshot、CardPublisher
 ├── core/sync/        SyncEngine、SyncPlanner、SyncRecord、WebDavTransport、WebDavXml、SyncConfigStore
-├── core/parser/      BookmarkHtmlParser
+├── core/parser/      ArticleExtractor、BookmarkHtmlParser
 ├── core/security/    CredentialCipher（HUKS）
 └── widget/pages/     桌面卡片（V1 装饰器）
 ```

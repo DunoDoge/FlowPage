@@ -12,6 +12,7 @@ import { formatFullDate } from '../common/DateUtil';
 import { deepLinkTextOf, shareContentOf } from '../common/ShareUtil';
 import { domainOf } from '../common/UrlUtil';
 import { FlowRepository } from '../repository/FlowRepository';
+import { ReadingMode, ReadingSeed } from '../model/ReadingEntry';
 import { ReaderView } from './ReaderView';
 
 @ComponentV2
@@ -28,7 +29,6 @@ export struct DetailContent {
   @Local tab: number = 0;
   @Local article: ArticleDocument = new ArticleDocument();
   @Local articleLoading: boolean = false;
-  @Local showReader: boolean = false;
   @Local editing: boolean = false;
   @Local draftTitle: string = '';
   @Local draftNote: string = '';
@@ -242,6 +242,49 @@ export struct DetailContent {
     context.startAbility(want).catch(() => {
       AppState.shared.toast('没有找到可打开它的应用');
     });
+  }
+
+  private openInAppBrowser(): void {
+    if (!this.hasBookmark || this.bookmark.url.length === 0) {
+      AppState.shared.toast('这一笺没有可打开的链接');
+      return;
+    }
+    const seed = new ReadingSeed();
+    seed.mode = ReadingMode.BROWSER;
+    seed.url = this.bookmark.url;
+    seed.title = this.bookmark.title;
+    seed.bookmark = this.bookmark;
+    seed.bookmarkId = this.bookmark.id;
+    seed.transient = false;
+    AppState.shared.openReading(seed);
+  }
+
+  private openImmersive(): void {
+    if (!this.hasBookmark) {
+      return;
+    }
+    const seed = new ReadingSeed();
+    seed.mode = ReadingMode.READER;
+    seed.url = this.bookmark.url;
+    seed.title = this.bookmark.title;
+    seed.article = this.article;
+    seed.bookmark = this.bookmark;
+    seed.bookmarkId = this.bookmark.id;
+    seed.transient = false;
+    AppState.shared.openReading(seed);
+  }
+
+  private openReadingLink(url: string): void {
+    if (url.length === 0) {
+      return;
+    }
+    const seed = new ReadingSeed();
+    seed.mode = ReadingMode.READER;
+    seed.url = url;
+    seed.title = domainOf(url);
+    seed.transient = true;
+    seed.autoLoad = true;
+    AppState.shared.openReading(seed);
   }
 
   private async shareBookmark(): Promise<void> {
@@ -470,37 +513,6 @@ export struct DetailContent {
         this.onBack();
       }
     })
-    .bindContentCover(this.showReader, this.FullReader(), {
-      enableSafeArea: true,
-      onDisappear: () => {
-        this.showReader = false;
-      }
-    })
-  }
-
-  @Builder
-  FullReader() {
-    ReaderView({
-      bookmark: this.bookmark,
-      bookmarkId: this.bookmark.id,
-      article: this.article,
-      compact: this.compact,
-      immersive: true,
-      loading: this.articleLoading || this.busy,
-      onClose: () => {
-        this.showReader = false;
-      },
-      onRetry: () => {
-        this.refreshMetadata();
-      },
-      onReadComplete: () => {
-        this.markRead(this.bookmark.id);
-      },
-      onExcerptSaved: (excerpt: string) => {
-        this.bookmark.excerpt = excerpt;
-        this.draftExcerpt = excerpt;
-      }
-    })
   }
 
   @Builder
@@ -654,7 +666,10 @@ export struct DetailContent {
           immersive: false,
           loading: this.articleLoading || this.busy,
           onOpenImmersive: () => {
-            this.showReader = true;
+            this.openImmersive();
+          },
+          onOpenLink: (url: string) => {
+            this.openReadingLink(url);
           },
           onRetry: () => {
             this.refreshMetadata();
@@ -708,10 +723,12 @@ export struct DetailContent {
       Flex({ wrap: FlexWrap.Wrap }) {
         if (this.bookmark.deleted) {
           this.ActionLabel('恢复', () => this.restoreBookmark())
-          this.ActionLabel('打开原文', () => this.openOriginal())
+          this.ActionLabel('打开原文', () => this.openInAppBrowser())
+          this.ActionLabel('系统浏览器', () => this.openOriginal())
           this.ActionLabel('彻底删除', () => this.confirmDelete())
         } else {
-          this.ActionLabel('打开原文', () => this.openOriginal())
+          this.ActionLabel('打开原文', () => this.openInAppBrowser())
+          this.ActionLabel('系统浏览器', () => this.openOriginal())
           this.ActionLabel('分享', () => this.shareBookmark())
           this.ActionLabel('复制深链', () => this.copyDeepLink())
           this.ActionLabel(this.bookmark.starred ? '取消星标' : '加星标', () => this.toggleStar())

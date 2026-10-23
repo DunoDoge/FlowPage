@@ -69,6 +69,27 @@ export function normalizeUrl(input: string): string {
   }
 }
 
+export function resolveHttpUrl(base: string, href: string): string {
+  const trimmed = href.trim();
+  if (trimmed.length === 0 || trimmed.charAt(0) === '#') {
+    return '';
+  }
+  try {
+    const parsed = base.length > 0 ? new url.URL(trimmed, base) : new url.URL(trimmed);
+    const protocol = parsed.protocol.toLowerCase();
+    if (protocol !== 'http:' && protocol !== 'https:') {
+      return '';
+    }
+    const host = parsed.hostname;
+    if (host.length === 0) {
+      return '';
+    }
+    return parsed.toString();
+  } catch (error) {
+    return '';
+  }
+}
+
 export function domainOf(input: string): string {
   const normalized = normalizeUrl(input);
   if (normalized.length === 0) {

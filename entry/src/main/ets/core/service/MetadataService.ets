@@ -1,57 +1,78 @@
 import { http } from '@kit.NetworkKit';
 import { util, url } from '@kit.ArkTS';
 import { Limits } from '../../common/Constants';
+import { resolveHttpUrl } from '../../common/UrlUtil';
 import { MetadataResult } from '../../model/MetadataResult';
 import { ArticleExtractor } from '../parser/ArticleExtractor';
+import { ArticleExtractService } from './ArticleExtractService';
+
+const ENTITY_VALUES: string[] = ['&', '<', '>', '"', '\'', '\'', ' '];
+const ENTITY_REGEXES: RegExp[] = [
+  new RegExp('&amp;', 'g'),
+  new RegExp('&lt;', 'g'),
+  new RegExp('&gt;', 'g'),
+  new RegExp('&quot;', 'g'),
+  new RegExp('&#39;', 'g'),
+  new RegExp('&apos;', 'g'),
+  new RegExp('&nbsp;', 'g')
+];
+const RE_SCRIPT = new RegExp('<script[\\s\\S]*?</script>', 'gi');
+const RE_STYLE = new RegExp('<style[\\s\\S]*?</style>', 'gi');
+const RE_COMMENT = new RegExp('<!--[\\s\\S]*?-->', 'g');
+const RE_BR = new RegExp('<br\\s*/?>', 'gi');
+const RE_BLOCK_END = new RegExp('</(p|div|li|h[1-6]|article|section)>', 'gi');
+const RE_TAG = new RegExp('<[^>]+>', 'g');
+const RE_INLINE_WS = new RegExp('[ \\t\\r]+', 'g');
+const RE_BLANK_LINES = new RegExp('\\n\\s*\\n+', 'g');
+const RE_META_TAG = new RegExp('<meta\\s+[^>]*>', 'gi');
+const RE_ATTR_KEY = new RegExp('(?:property|name)\\s*=\\s*["\\\']([^"\\\']+)["\\\']', 'i');
+const RE_ATTR_CONTENT = new RegExp('content\\s*=\\s*["\\\']([^"\\\']*)["\\\']', 'i');
+const RE_LINK_TAG = new RegExp('<link\\s+[^>]*>', 'gi');
+const RE_REL = new RegExp('rel\\s*=\\s*["\\\']([^"\\\']+)["\\\']', 'i');
+const RE_HREF = new RegExp('href\\s*=\\s*["\\\']([^"\\\']+)["\\\']', 'i');
+const RE_BASE_TAG = new RegExp('<base\\s+[^>]*>', 'gi');
+const RE_TITLE = new RegExp('<title[^>]*>([\\s\\S]*?)</title>', 'i');
+const RE_CHARSET_HEADER = new RegExp('charset=([a-z0-9_-]+)');
+const RE_CHARSET_META = new RegExp('<meta[^>]+charset\\s*=\\s*["\\\']?([a-zA-Z0-9_-]+)');
 
 export class MetadataService {
   private static decodeEntities(input: string): string {
     let text = input;
-    const pairs: string[][] = [
-      ['&amp;', '&'],
-      ['&lt;', '<'],
-      ['&gt;', '>'],
-      ['&quot;', '"'],
-      ['&#39;', '\''],
-      ['&apos;', '\''],
-      ['&nbsp;', ' ']
-    ];
-    for (let i = 0; i < pairs.length; i++) {
-      text = text.replace(new RegExp(pairs[i][0], 'g'), pairs[i][1]);
+    for (let i = 0; i < ENTITY_REGEXES.length; i++) {
+      text = text.replace(ENTITY_REGEXES[i], ENTITY_VALUES[i]);
     }
     return text;
   }
 
   static stripTags(html: string): string {
     let text = html;
-    text = text.replace(new RegExp('<script[\\s\\S]*?</script>', 'gi'), ' ');
-    text = text.replace(new RegExp('<style[\\s\\S]*?</style>', 'gi'), ' ');
-    text = text.replace(new RegExp('<!--[\\s\\S]*?-->', 'g'), ' ');
-    text = text.replace(new RegExp('<br\\s*/?>', 'gi'), '\n');
-    text = text.replace(new RegExp('</(p|div|li|h[1-6]|article|section)>', 'gi'), '\n');
-    text = text.replace(new RegExp('<[^>]+>', 'g'), ' ');
+    text = text.replace(RE_SCRIPT, ' ');
+    text = text.replace(RE_STYLE, ' ');
+    text = text.replace(RE_COMMENT, ' ');
+    text = text.replace(RE_BR, '\n');
+    text = text.replace(RE_BLOCK_END, '\n');
+    text = text.replace(RE_TAG, ' ');
     text = MetadataService.decodeEntities(text);
-    text = text.replace(new RegExp('[ \\t\\r]+', 'g'), ' ');
-    text = text.replace(new RegExp('\\n\\s*\\n+', 'g'), '\n\n');
+    text = text.replace(RE_INLINE_WS, ' ');
+    text = text.replace(RE_BLANK_LINES, '\n\n');
     return text.trim();
   }
 
   private static metaContent(html: string, key: string): string {
-    const tags = html.match(new RegExp('<meta\\s+[^>]*>', 'gi'));
+    const tags = html.match(RE_META_TAG);
     if (tags === null) {
       return '';
     }
-    const keyReg = new RegExp('(?:property|name)\\s*=\\s*["\\\']([^"\\\']+)["\\\']', 'i');
-    const contentReg = new RegExp('content\\s*=\\s*["\\\']([^"\\\']*)["\\\']', 'i');
+
     for (let i = 0; i < tags.length; i++) {
-      const keyMatch = keyReg.exec(tags[i]);
+      const keyMatch = RE_ATTR_KEY.exec(tags[i]);
       if (keyMatch === null) {
         continue;
       }
       if (keyMatch[1].toLowerCase() !== key) {
         continue;
       }
-      const contentMatch = contentReg.exec(tags[i]);
+      const contentMatch = RE_ATTR_CONTENT.exec(tags[i]);
       if (contentMatch !== null) {
         return MetadataService.decodeEntities(contentMatch[1]);
       }
@@ -60,18 +81,17 @@ export class MetadataService {
   }
 
   private static linkHref(html: string): string {
-    const tags = html.match(new RegExp('<link\\s+[^>]*>', 'gi'));
+    const tags = html.match(RE_LINK_TAG);
     if (tags === null) {
       return '';
     }
-    const relReg = new RegExp('rel\\s*=\\s*["\\\']([^"\\\']+)["\\\']', 'i');
-    const hrefReg = new RegExp('href\\s*=\\s*["\\\']([^"\\\']+)["\\\']', 'i');
+
     for (let i = 0; i < tags.length; i++) {
-      const relMatch = relReg.exec(tags[i]);
+      const relMatch = RE_REL.exec(tags[i]);
       if (relMatch === null || relMatch[1].toLowerCase().indexOf('icon') < 0) {
         continue;
       }
-      const hrefMatch = hrefReg.exec(tags[i]);
+      const hrefMatch = RE_HREF.exec(tags[i]);
       if (hrefMatch !== null) {
         return MetadataService.decodeEntities(hrefMatch[1]);
       }
@@ -93,6 +113,24 @@ export class MetadataService {
     } catch (error) {
       return '';
     }
+  }
+
+  private static documentBase(pageUrl: string, html: string): string {
+    const tags = html.match(RE_BASE_TAG);
+    if (tags === null) {
+      return pageUrl;
+    }
+    for (let i = 0; i < tags.length; i++) {
+      const hrefMatch = RE_HREF.exec(tags[i]);
+      if (hrefMatch === null) {
+        continue;
+      }
+      const resolved = resolveHttpUrl(pageUrl, MetadataService.decodeEntities(hrefMatch[1]));
+      if (resolved.length > 0) {
+        return resolved;
+      }
+    }
+    return pageUrl;
   }
 
   static async checkLink(targetUrl: string): Promise<number> {
@@ -141,7 +179,7 @@ export class MetadataService {
     }
   }
 
-  static async fetch(targetUrl: string, includeSnapshot: boolean = true): Promise<MetadataResult> {
+  static async fetch(targetUrl: string, includeSnapshot: boolean = true, offThread: boolean = false): Promise<MetadataResult> {
     const result = new MetadataResult();
     const request = http.createHttp();
     try {
@@ -172,7 +210,7 @@ export class MetadataService {
         result.success = false;
         return result;
       }
-      const titleMatch = new RegExp('<title[^>]*>([\\s\\S]*?)</title>', 'i').exec(html);
+      const titleMatch = RE_TITLE.exec(html);
       const rawTitle = MetadataService.metaContent(html, 'og:title');
       const fallback = titleMatch !== null ? MetadataService.stripTags(titleMatch[1]) : '';
       result.title = rawTitle.length > 0 ? rawTitle : fallback;
@@ -190,7 +228,10 @@ export class MetadataService {
       }
       let bodyText = '';
       if (includeSnapshot) {
-        const article = ArticleExtractor.extract(html, result.title);
+        const base = MetadataService.documentBase(targetUrl, html);
+        const article = offThread
+          ? await ArticleExtractService.extractAsync(html, result.title, base)
+          : ArticleExtractor.extract(html, result.title, base);
         article.truncate(Limits.snapshotBytes);
         result.article = article;
         bodyText = article.plainText();
@@ -220,7 +261,7 @@ export class MetadataService {
     let charset = 'utf-8';
     try {
       const headerText = JSON.stringify(header).toLowerCase();
-      const match = new RegExp('charset=([a-z0-9_-]+)').exec(headerText);
+      const match = RE_CHARSET_HEADER.exec(headerText);
       if (match !== null) {
         charset = match[1];
       }
@@ -229,7 +270,7 @@ export class MetadataService {
     }
     if (charset === 'utf-8') {
       const preview = new util.TextDecoder('utf-8').decodeToString(bytes.slice(0, 2048));
-      const metaMatch = new RegExp('<meta[^>]+charset\\s*=\\s*["\\\']?([a-zA-Z0-9_-]+)').exec(preview);
+      const metaMatch = RE_CHARSET_META.exec(preview);
       if (metaMatch !== null) {
         charset = metaMatch[1].toLowerCase();
       }

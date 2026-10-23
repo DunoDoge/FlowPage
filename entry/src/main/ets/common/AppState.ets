@@ -1,5 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { Pane } from './Constants';
+import { ReadingSeed } from '../model/ReadingEntry';
 
 @ObservedV2
 export class AppState {
@@ -21,6 +22,11 @@ export class AppState {
   @Trace tagFilter: string = '';
   @Trace inboxUrl: string = '';
   @Trace showInbox: boolean = false;
+  @Trace readingOpen: boolean = false;
+  @Trace readingTick: number = 0;
+  @Trace readingBackTick: number = 0;
+  @Trace readingCanGoBack: boolean = false;
+  readingSeed: ReadingSeed = new ReadingSeed();
   // Ability contexts are published once at startup so pages never cast getContext().
   abilityContext: common.UIAbilityContext | undefined = undefined;
   shareContext: common.UIExtensionContext | undefined = undefined;
@@ -28,6 +34,23 @@ export class AppState {
 
   notifyChanged(): void {
     this.refreshTick = this.refreshTick + 1;
+  }
+
+  openReading(seed: ReadingSeed): void {
+    this.readingSeed = seed;
+    this.readingCanGoBack = false;
+    this.readingTick = this.readingTick + 1;
+    this.readingOpen = true;
+  }
+
+  closeReading(): void {
+    this.readingOpen = false;
+    this.readingCanGoBack = false;
+    this.readingSeed = new ReadingSeed();
+  }
+
+  requestReadingBack(): void {
+    this.readingBackTick = this.readingBackTick + 1;
   }
 
   openInbox(url: string): void {

@@ -1,7 +1,12 @@
-import { ArticleBlock, ArticleBlockType, ArticleDocument } from '../../model/Article';
+import { ArticleBlock, ArticleBlockType, ArticleDocument, ArticleLink } from '../../model/Article';
 import { Limits } from '../../common/Constants';
+import { resolveHttpUrl } from '../../common/UrlUtil';
 
 const LINE_BREAK_MARKER: string = '\uE000';
+const LINK_OPEN: string = '\uE010';
+const LINK_URL_END: string = '\uE011';
+const LINK_CLOSE: string = '\uE012';
+const MAX_LINKS_PER_BLOCK: number = 100;
 const MIN_CONTAINER_SCORE: number = 200;
 const KNOWN_TAGS: string[] = [
   'html', 'body', 'head', 'title', 'meta', 'link', 'script', 'style', 'noscript',
@@ -36,6 +41,80 @@ const WEAK_TEASER_NAMES: string[] = ['card', 'summary'];
 const TITLE_SITE_SEPARATORS: string[] = [
   ' - ', ' | ', ' · ', ' — ', ' – ', '｜', '|', '·', '—', '–'
 ];
+
+// Hoisted: these run once per block (or once per tag) and compiling them inside
+// the scanner dominates extraction time on long documents.
+const TOKEN_REG: RegExp = new RegExp('<[a-zA-Z/!?][^>]*>|[^<]+|<', 'g');
+const HREF_REG: RegExp = new RegExp("href\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))", 'i');
+const NUMERIC_ENTITY_REG: RegExp = new RegExp('&#(x?[0-9a-fA-F]+);', 'g');
+const TRAILING_WS_REG: RegExp = new RegExp('[ \\t]+$', 'g');
+const WS_RUN_REG: RegExp = new RegExp('\\s+', 'g');
+const TAG_STRIP_REG: RegExp = new RegExp('<[a-zA-Z/!?][^>]*>', 'g');
+const BR_REG: RegExp = new RegExp('<br\\s*/?>', 'gi');
+const BLOCK_END_REG: RegExp = new RegExp('</(p|div|li|h[1-6]|blockquote|pre)>', 'gi');
+const INLINE_WS_REG: RegExp = new RegExp('[ \\t\\r]+', 'g');
+const BLANK_RUN_REG: RegExp = new RegExp('\\n\\s*\\n+', 'g');
+const JUNK_ATTR_REG: RegExp = new RegExp('(class|id)\\s*=\\s*["\\\']([^"\\\']*)["\\\']', 'gi');
+const NAME_SPLIT_REG: RegExp = new RegExp('[\\s]+');
+const PIECE_SPLIT_REG: RegExp = new RegExp('[-_]+');
+const META_NAME_REG: RegExp = new RegExp(META_NAME_PATTERN, 'i');
+const META_LINE_PUNCT_REG: RegExp = new RegExp('[。！？.!?]');
+const DIGIT_REG: RegExp = new RegExp('[0-9]');
+const TAG_TOKEN_CACHE: Map<string, RegExp> = new Map<string, RegExp>();
+
+const ENTITY_PAIRS: string[][] = [
+  ['&nbsp;', ' '],
+  ['&mdash;', '\u2014'],
+  ['&ndash;', '\u2013'],
+  ['&hellip;', '\u2026'],
+  ['&rsquo;', '\u2019'],
+  ['&lsquo;', '\u2018'],
+  ['&rdquo;', '\u201D'],
+  ['&ldquo;', '\u201C'],
+  ['&laquo;', '\u00AB'],
+  ['&raquo;', '\u00BB'],
+  ['&middot;', '\u00B7'],
+  ['&bull;', '\u2022'],
+  ['&copy;', '\u00A9'],
+  ['&reg;', '\u00AE'],
+  ['&trade;', '\u2122'],
+  ['&deg;', '\u00B0'],
+  ['&times;', '\u00D7'],
+  ['&divide;', '\u00F7'],
+  ['&frac12;', '\u00BD'],
+  ['&euro;', '\u20AC'],
+  ['&pound;', '\u00A3'],
+  ['&yen;', '\u00A5'],
+  ['&lt;', '<'],
+  ['&gt;', '>'],
+  ['&quot;', '"'],
+  ['&apos;', '\''],
+  ['&#39;', '\''],
+  ['&amp;', '&']
+];
+
+class EntityPatternTable {
+  readonly patterns: RegExp[] = [];
+
+  constructor() {
+    for (let i = 0; i < ENTITY_PAIRS.length; i++) {
+      this.patterns.push(new RegExp(ENTITY_PAIRS[i][0], 'g'));
+    }
+  }
+}
+
+const ENTITY_PATTERNS: RegExp[] = new EntityPatternTable().patterns;
+
+function tagTokenReg(tagName: string): RegExp {
+  const cached = TAG_TOKEN_CACHE.get(tagName);
+  if (cached !== undefined) {
+    cached.lastIndex = 0;
+    return cached;
+  }
+  const reg = new RegExp('<' + tagName + '\\b[^>]*>|<\\/' + tagName + '\\s*>', 'gi');
+  TAG_TOKEN_CACHE.set(tagName, reg);
+  return reg;
+}
 
 class ElementRange {
   start: number = 0;
@@ -93,9 +172,126 @@ class BlockContext {
   }
 }
 
+class TextRange {
+  start: number = 0;
+  end: number = 0;
+
+  static of(start: number, end: number): TextRange {
+    const range = new TextRange();
+    range.start = start;
+    range.end = end;
+    return range;
+  }
+}
+
+class LinkParseResult {
+  text: string = '';
+  links: ArticleLink[] = [];
+}
+
+function isLinkSpace(ch: string): boolean {
+  return ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r';
+}
+
+function trimLinkRange(text: string, start: number, end: number): TextRange {
+  let from = start;
+  let to = end;
+  while (from < to && isLinkSpace(text.charAt(from))) {
+    from = from + 1;
+  }
+  while (to > from && isLinkSpace(text.charAt(to - 1))) {
+    to = to - 1;
+  }
+  return TextRange.of(from, to);
+}
+
+function parseLinks(input: string): LinkParseResult {
+  const result = new LinkParseResult();
+  let output = '';
+  let pendingUrl = '';
+  let start = -1;
+  let index = 0;
+  while (index < input.length) {
+    const ch = input.charAt(index);
+    if (ch === LINK_OPEN) {
+      const urlEnd = input.indexOf(LINK_URL_END, index + 1);
+      if (urlEnd < 0) {
+        index = index + 1;
+        continue;
+      }
+      if (start < 0) {
+        let decoded = '';
+        try {
+          decoded = decodeURIComponent(input.substring(index + 1, urlEnd));
+        } catch (error) {
+          decoded = '';
+        }
+        if (decoded.length > 0) {
+          pendingUrl = decoded;
+          start = output.length;
+        }
+      }
+      index = urlEnd + 1;
+      continue;
+    }
+    if (ch === LINK_CLOSE) {
+      if (start >= 0) {
+        const range = trimLinkRange(output, start, output.length);
+        if (range.end > range.start && result.links.length < MAX_LINKS_PER_BLOCK) {
+          result.links.push(ArticleLink.of(range.start, range.end, pendingUrl));
+        }
+      }
+      start = -1;
+      pendingUrl = '';
+      index = index + 1;
+      continue;
+    }
+    output = output + ch;
+    index = index + 1;
+  }
+  if (start >= 0) {
+    const range = trimLinkRange(output, start, output.length);
+    if (range.end > range.start && result.links.length < MAX_LINKS_PER_BLOCK) {
+      result.links.push(ArticleLink.of(range.start, range.end, pendingUrl));
+    }
+  }
+  result.text = output;
+  return result;
+}
+
+function trimParsedText(parsed: LinkParseResult): LinkParseResult {
+  const text = parsed.text;
+  let from = 0;
+  let to = text.length;
+  while (from < to && isLinkSpace(text.charAt(from))) {
+    from = from + 1;
+  }
+  while (to > from && isLinkSpace(text.charAt(to - 1))) {
+    to = to - 1;
+  }
+  if (from === 0 && to === text.length) {
+    return parsed;
+  }
+  const trimmed = new LinkParseResult();
+  trimmed.text = text.substring(from, to);
+  for (let i = 0; i < parsed.links.length; i++) {
+    const link = parsed.links[i];
+    const start = Math.max(0, link.start - from);
+    const end = Math.min(to, link.end) - from;
+    if (end > start && start < trimmed.text.length) {
+      trimmed.links.push(ArticleLink.of(start, end, link.url));
+    }
+  }
+  return trimmed;
+}
+
 function decodeEntities(input: string): string {
+  if (input.indexOf('&') < 0) {
+    return input;
+  }
   let text = input;
-  const numeric = new RegExp('&#(x?[0-9a-fA-F]+);', 'g');
+  const numeric = NUMERIC_ENTITY_REG;
+  numeric.lastIndex = 0;
   let result = '';
   let last = 0;
   let match = numeric.exec(text);
@@ -121,38 +317,10 @@ function decodeEntities(input: string): string {
   }
   result = result + text.substring(last);
   text = result;
-  const pairs: string[][] = [
-    ['&nbsp;', ' '],
-    ['&mdash;', '\u2014'],
-    ['&ndash;', '\u2013'],
-    ['&hellip;', '\u2026'],
-    ['&rsquo;', '\u2019'],
-    ['&lsquo;', '\u2018'],
-    ['&rdquo;', '\u201D'],
-    ['&ldquo;', '\u201C'],
-    ['&laquo;', '\u00AB'],
-    ['&raquo;', '\u00BB'],
-    ['&middot;', '\u00B7'],
-    ['&bull;', '\u2022'],
-    ['&copy;', '\u00A9'],
-    ['&reg;', '\u00AE'],
-    ['&trade;', '\u2122'],
-    ['&deg;', '\u00B0'],
-    ['&times;', '\u00D7'],
-    ['&divide;', '\u00F7'],
-    ['&frac12;', '\u00BD'],
-    ['&euro;', '\u20AC'],
-    ['&pound;', '\u00A3'],
-    ['&yen;', '\u00A5'],
-    ['&lt;', '<'],
-    ['&gt;', '>'],
-    ['&quot;', '"'],
-    ['&apos;', '\''],
-    ['&#39;', '\''],
-    ['&amp;', '&']
-  ];
-  for (let i = 0; i < pairs.length; i++) {
-    text = text.replace(new RegExp(pairs[i][0], 'g'), pairs[i][1]);
+  for (let i = 0; i < ENTITY_PATTERNS.length; i++) {
+    if (text.indexOf(ENTITY_PAIRS[i][0]) >= 0) {
+      text = text.replace(ENTITY_PATTERNS[i], ENTITY_PAIRS[i][1]);
+    }
   }
   return text;
 }
@@ -164,7 +332,7 @@ function cleanBlockText(input: string, isCode: boolean): string {
     const lines = text.split('\n');
     const trimmed: string[] = [];
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].replace(new RegExp('[ \\t]+$', 'g'), '');
+      const line = lines[i].replace(TRAILING_WS_REG, '');
       if (trimmed.length === 0 && line.trim().length === 0) {
         continue;
       }
@@ -189,7 +357,7 @@ function cleanBlockText(input: string, isCode: boolean): string {
     return kept.join('\n').trim();
   }
   text = text.split('\r\n').join('\n').split('\r').join('\n');
-  text = text.replace(new RegExp('\\s+', 'g'), ' ').trim();
+  text = text.replace(WS_RUN_REG, ' ').trim();
   const pieces = text.split(LINE_BREAK_MARKER);
   const lines: string[] = [];
   for (let i = 0; i < pieces.length; i++) {
@@ -206,17 +374,17 @@ function cleanBlockText(input: string, isCode: boolean): string {
 }
 
 function strippedTextLength(html: string): number {
-  return html.replace(new RegExp('<[a-zA-Z/!?][^>]*>', 'g'), ' ').trim().length;
+  return html.replace(TAG_STRIP_REG, ' ').trim().length;
 }
 
 function plainTextOf(html: string): string {
   let text = html;
-  text = text.replace(new RegExp('<br\\s*/?>', 'gi'), '\n');
-  text = text.replace(new RegExp('</(p|div|li|h[1-6]|blockquote|pre)>', 'gi'), '\n');
-  text = text.replace(new RegExp('<[a-zA-Z/!?][^>]*>', 'g'), ' ');
+  text = text.replace(BR_REG, '\n');
+  text = text.replace(BLOCK_END_REG, '\n');
+  text = text.replace(TAG_STRIP_REG, ' ');
   text = decodeEntities(text);
-  text = text.replace(new RegExp('[ \\t\\r]+', 'g'), ' ');
-  text = text.replace(new RegExp('\\n\\s*\\n+', 'g'), '\n\n');
+  text = text.replace(INLINE_WS_REG, ' ');
+  text = text.replace(BLANK_RUN_REG, '\n\n');
   return text.trim();
 }
 
@@ -247,16 +415,20 @@ function stripSiteSuffix(text: string): string {
 
 class BlockScanner {
   private source: string = '';
+  private baseUrl: string = '';
   private blocks: ArticleBlock[] = [];
   private buffer: string = '';
+  private linkOpen: boolean = false;
   private stack: BlockContext[] = [BlockContext.of('body', ArticleBlockType.PARAGRAPH, 0)];
 
-  constructor(source: string) {
+  constructor(source: string, baseUrl: string = '') {
     this.source = source;
+    this.baseUrl = baseUrl;
   }
 
   scan(): ArticleBlock[] {
-    const token = new RegExp('<[a-zA-Z/!?][^>]*>|[^<]+|<', 'g');
+    const token = TOKEN_REG;
+    token.lastIndex = 0;
     let match = token.exec(this.source);
     while (match !== null) {
       const piece = match[0];
@@ -279,12 +451,33 @@ class BlockScanner {
   }
 
   private flush(): void {
-    const context = this.current();
-    const text = cleanBlockText(this.buffer, context.type === ArticleBlockType.CODE);
-    if (text.length > 0) {
-      this.blocks.push(ArticleBlock.of(context.type, context.level, text));
+    if (this.linkOpen) {
+      this.buffer = this.buffer + LINK_CLOSE;
+      this.linkOpen = false;
     }
+    const context = this.current();
+    const cleaned = cleanBlockText(this.buffer, context.type === ArticleBlockType.CODE);
     this.buffer = '';
+    if (cleaned.length === 0) {
+      return;
+    }
+    if (context.type === ArticleBlockType.CODE) {
+      this.blocks.push(ArticleBlock.of(context.type, context.level, cleaned));
+      return;
+    }
+    const parsed = trimParsedText(parseLinks(cleaned));
+    if (parsed.text.length === 0) {
+      return;
+    }
+    const resolved: ArticleLink[] = [];
+    for (let i = 0; i < parsed.links.length; i++) {
+      const link = parsed.links[i];
+      const url = resolveHttpUrl(this.baseUrl, link.url);
+      if (url.length > 0) {
+        resolved.push(ArticleLink.of(link.start, link.end, url));
+      }
+    }
+    this.blocks.push(ArticleBlock.of(context.type, context.level, parsed.text, resolved));
   }
 
   private handleTag(token: string): void {
@@ -305,8 +498,25 @@ class BlockScanner {
     if (token.substring(0, 2) === '</') {
       this.handleClose(tag);
     } else {
-      this.handleOpen(tag);
+      this.handleOpen(tag, token);
     }
+  }
+
+  private hrefOf(token: string): string {
+    const reg = HREF_REG;
+    const match = reg.exec(token);
+    if (match === null) {
+      return '';
+    }
+    let value = '';
+    if (typeof match[1] === 'string' && match[1].length > 0) {
+      value = match[1];
+    } else if (typeof match[2] === 'string' && match[2].length > 0) {
+      value = match[2];
+    } else if (typeof match[3] === 'string') {
+      value = match[3];
+    }
+    return decodeEntities(value).trim();
   }
 
   private isKnownTag(tag: string): boolean {
@@ -331,10 +541,28 @@ class BlockScanner {
     return token.substring(start, end).toLowerCase();
   }
 
-  private handleOpen(tag: string): void {
+  private handleOpen(tag: string, token: string): void {
     if (this.current().type === ArticleBlockType.CODE) {
       if (tag === 'br') {
         this.buffer = this.buffer + '\n';
+      }
+      return;
+    }
+    if (tag === 'a') {
+      if (!this.linkOpen) {
+        const href = this.hrefOf(token);
+        if (href.length > 0) {
+          let encoded = '';
+          try {
+            encoded = encodeURIComponent(href);
+          } catch (error) {
+            encoded = '';
+          }
+          if (encoded.length > 0) {
+            this.buffer = this.buffer + LINK_OPEN + encoded + LINK_URL_END;
+            this.linkOpen = true;
+          }
+        }
       }
       return;
     }
@@ -382,6 +610,13 @@ class BlockScanner {
   }
 
   private handleClose(tag: string): void {
+    if (tag === 'a') {
+      if (this.linkOpen) {
+        this.buffer = this.buffer + LINK_CLOSE;
+        this.linkOpen = false;
+      }
+      return;
+    }
     if (this.current().type === ArticleBlockType.CODE) {
       if (tag === 'pre') {
         this.flush();
@@ -478,7 +713,7 @@ class BlockScanner {
 }
 
 export class ArticleExtractor {
-  static extract(html: string, knownTitle: string = ''): ArticleDocument {
+  static extract(html: string, knownTitle: string = '', baseUrl: string = ''): ArticleDocument {
     if (html.trim().length === 0) {
       return new ArticleDocument();
     }
@@ -487,7 +722,7 @@ export class ArticleExtractor {
     // the body ratio and cause a small but real article to be treated as teaser.
     const body = ArticleExtractor.removeJunkBlocks(ArticleExtractor.bodyInner(source));
     const container = ArticleExtractor.selectContainer(body);
-    let blocks = new BlockScanner(container).scan();
+    let blocks = new BlockScanner(container, baseUrl).scan();
     blocks = ArticleExtractor.dropDuplicateTitle(blocks, knownTitle);
     if (blocks.length === 0) {
       const fallback = ArticleDocument.fromPlainText(plainTextOf(container));
@@ -646,10 +881,11 @@ export class ArticleExtractor {
   }
 
   private static isJunkNamed(openTag: string): boolean {
-    const attr = new RegExp('(class|id)\\s*=\\s*["\\\']([^"\\\']*)["\\\']', 'gi');
+    const attr = JUNK_ATTR_REG;
+    attr.lastIndex = 0;
     let match = attr.exec(openTag);
     while (match !== null) {
-      const names = match[2].toLowerCase().split(new RegExp('[\\s]+'));
+      const names = match[2].toLowerCase().split(NAME_SPLIT_REG);
       for (let i = 0; i < names.length; i++) {
         const name = names[i];
         if (name.length === 0) {
@@ -658,7 +894,7 @@ export class ArticleExtractor {
         if (JUNK_NAME_EXACT.indexOf(name) >= 0) {
           return true;
         }
-        const pieces = name.split(new RegExp('[-_]+'));
+        const pieces = name.split(PIECE_SPLIT_REG);
         for (let j = 0; j < pieces.length; j++) {
           if (pieces[j].length > 0 && JUNK_NAME_PIECES.indexOf(pieces[j]) >= 0) {
             return true;
@@ -673,13 +909,14 @@ export class ArticleExtractor {
   // 0 = not a teaser, 1 = weak (card/summary), 2 = strong (teaser/recommend/...).
   // Both strengths are only removed when a semantic content container exists.
   private static teaserStrengthOf(openTag: string): number {
-    const attr = new RegExp('(class|id)\\s*=\\s*["\\\']([^"\\\']*)["\\\']', 'gi');
+    const attr = JUNK_ATTR_REG;
+    attr.lastIndex = 0;
     let strength = 0;
     let match = attr.exec(openTag);
     while (match !== null) {
-      const names = match[2].toLowerCase().split(new RegExp('[\\s]+'));
+      const names = match[2].toLowerCase().split(NAME_SPLIT_REG);
       for (let i = 0; i < names.length; i++) {
-        const pieces = names[i].split(new RegExp('[-_]+'));
+        const pieces = names[i].split(PIECE_SPLIT_REG);
         for (let j = 0; j < pieces.length; j++) {
           if (STRONG_TEASER_NAMES.indexOf(pieces[j]) >= 0) {
             return 2;
@@ -762,7 +999,7 @@ export class ArticleExtractor {
   }
 
   private static isMetaNamed(openTag: string): boolean {
-    return new RegExp(META_NAME_PATTERN, 'i').test(openTag);
+    return META_NAME_REG.test(openTag);
   }
 
   private static largestTag(source: string, tagName: string, skipTeaser: boolean = false): string {
@@ -825,7 +1062,7 @@ export class ArticleExtractor {
   }
 
   private static findMatchingClose(source: string, tagName: string, openEnd: number): number {
-    const token = new RegExp('<' + tagName + '\\b[^>]*>|<\\/' + tagName + '\\s*>', 'gi');
+    const token = tagTokenReg(tagName);
     token.lastIndex = openEnd;
     let depth = 1;
     let match = token.exec(source);
@@ -971,10 +1208,10 @@ export class ArticleExtractor {
     if (trimmed.length === 0 || trimmed.length > 40) {
       return false;
     }
-    if (new RegExp('[。！？.!?]').test(trimmed)) {
+    if (META_LINE_PUNCT_REG.test(trimmed)) {
       return false;
     }
-    if (new RegExp('[0-9]').test(trimmed)) {
+    if (DIGIT_REG.test(trimmed)) {
       return true;
     }
     const words: string[] = ['作者', '编辑', '来源', '发布', '更新', '时间', '阅读', 'by ', 'By ', '@', '·', '|'];

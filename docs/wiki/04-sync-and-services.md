@@ -187,8 +187,11 @@ id、url、标题/摘要/站点/图标/封面、备注/摘录、标签、`folder
   `MetadataService.fetch(url, false)` 仍抓取标题/摘要，但不返回正文；没有可读旧快照时写 `OFF`，
   已有可读快照保持 `DONE`，仍可阅读。
 - [SnapshotStore.ets](../../entry/src/main/ets/core/service/SnapshotStore.ets)：仍写
-  `filesDir/snapshots/<id>.txt`，内容是带 `FLOWPAGE-ARTICLE-1` 版本头的结构化文本
-  （`core/service/ArticleCodec.ets` 编解码）；旧纯文本快照读取时降级为段落，同步仍不包含正文。
+  `filesDir/snapshots/<id>.txt`，内容是带 `FLOWPAGE-ARTICLE-2` 版本头的结构化文本
+  （`core/service/ArticleCodec.ets` 编解码），块行第三字段携带链接区间；旧
+  `FLOWPAGE-ARTICLE-1`/纯文本快照读取时降级为无链接段落，同步仍不包含正文。
+- 链接页的临时阅读由 `ReaderPageLoader` 原生抓取，不写 RDB/快照；浏览器「阅读」用
+  `WebviewController.runJavaScriptExt('document.body.innerHTML')` 取实时 DOM 后复用 `ArticleExtractor`。
 - 提取规则更新后，详情页“重新抓取”在提取到有效正文时覆盖旧快照；抓取失败或正文为空时保留旧快照。
 
 ## 8. 错误文案

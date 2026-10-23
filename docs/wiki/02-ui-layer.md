@@ -46,15 +46,29 @@
 - 打开时按 `bookmarkId` 读取；若是未读且未删除，自动 `setRead(READING)`，停留 30 秒后转 `READ`。
 - 三个页签：正文、摘录、备注。正文由 [ReaderView.ets](../../entry/src/main/ets/components/ReaderView.ets)
   渲染；只要 `snapshotPath` 可读就读取（不要求 `snapshotStatus === DONE`），旧纯文本快照按段落降级。
-- 正文页签内是行内阅读器：按段落/标题/引用/列表/代码块渲染，支持选中文本“存为摘录”；工具栏提供
-  “字号”和“专注阅读”。
-- “专注阅读”通过 `bindContentCover` 打开全屏 `ReaderView`（`immersive=true`）：支持搜索/高亮、
-  目录跳转、字号/行距/段距、阅读进度、按书签记忆滚动位置，进度 ≥90% 时标记已读。
-- 阅读偏好（字号 15–23fp、行距三档、段距三档）存在 `flowpage_settings`；阅读位置按书签存在
-  `flowpage_reader`，仅本机，不参与 WebDAV 同步。
+- 正文页签内是行内阅读器：按段落/标题/引用/列表/代码块渲染，链接用下划线 + 墨色 `Span` 呈现并可点击；
+  支持选中文本“存为摘录”；工具栏提供“字号”和“专注阅读”。
+- **ReaderView 分窗挂载**：首屏只渲染前 `INITIAL_BLOCKS=200` 块（`visibleCount`），
+  `SelectionContainer` 只包住已挂载块，单页节点数与内存随窗口而非全文增长。滚到已渲染内容底部
+  （`onScrollEdge(Bottom)`）或点底部「继续阅读 · n/total」时按 `BLOCK_BATCH=200` 追加。
+  目录/搜索跳转先 `ensureMounted(index)`；位置恢复若目标在窗口外会扩窗并重试（10 × 200 ms）。
+  未全量挂载时进度按块下标估算，全量挂载后仍用像素比例；批次边界不会提前标记已读（`onReadComplete` 在全量挂载后进度 ≥90% 或到达末尾时触发）。
+  实测 648 块页面：专注阅读首帧 2.5 s → 0.4 s，单次链接点击的主线程阻塞 5.7–7.2 s → 0.36–0.53 s。
+- “专注阅读”打开 [ReadingShell.ets](../../entry/src/main/ets/components/ReadingShell.ets)（`Index` 根部
+  `bindContentCover`，`enableSafeArea=true`）；`ReadingShell` 统一承载阅读栈与内置 Web，`ReaderView` 负责正文排版。
+- 阅读模式点正文链接：http(s) 文档由 `ReaderPageLoader` 原生抓取后 push 临时条目；非文档链接直接进内置浏览器。
+  临时页显示「临时阅读」，不写 RDB/阅读位置，底部与菜单提供「收藏这一页」。
+- 顶部返回/系统返回/ESC 逐层回退：先走 Web 历史，再回到已有正文，再弹出条目，最后关闭覆盖层；
+  系统返回由 ContentCover `onWillDismiss` 转为 `readingBackTick`。
+- 内置浏览器为单标签 ArkWeb：地址可编辑，支持前进/后退/刷新、加载进度与错误态；「阅读」从实时 DOM 提取正文，
+  生成新的临时阅读条目；「网页」从阅读模式回到当前 URL。
+- `ReadingShell` 顶栏的阅读/网页切换使用组件内 `@Local mode`，避免 `@Builder` 参数标签不随状态刷新的问题。
+- 阅读偏好（字号 15–23fp、行距三档、段距三档）存在 `flowpage_settings`；根书签阅读位置按书签存在
+  `flowpage_reader`，临时页位置只在内存中，均不参与 WebDAV 同步。
 - 正文页签固定显示“重新抓取”，可在提取规则更新后覆盖旧快照；没有快照时也显示“重试抓取”。
 - 编辑态保存标题、标签、摘录、备注；标签同时按英文逗号和中文逗号切分并去重。
-- 操作：打开原文（系统 `viewData`）、分享原文 URL（`systemShare`）、复制 `flowpage://bookmark/{id}` 深链、星标、归档、查链接、重新抓取、删除。
+- 操作：打开原文（应用内浏览）、系统浏览器、分享原文 URL（`systemShare`）、复制 `flowpage://bookmark/{id}` 深链、
+  星标、归档、查链接、重新抓取、删除。
 - 删除是软删除并提示 30 天；已在回收站时提供“恢复 / 彻底删除”，彻底删除会先确认并删除快照。
 - “查链接”调用 `MetadataService.checkLink()`，写入 `link_status`（1 可用 / 2 可能失效 / 0 未判断）。
 

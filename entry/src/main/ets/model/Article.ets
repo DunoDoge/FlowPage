@@ -6,16 +6,32 @@ export enum ArticleBlockType {
   CODE = 4
 }
 
+export class ArticleLink {
+  start: number = 0;
+  end: number = 0;
+  url: string = '';
+
+  static of(start: number, end: number, url: string): ArticleLink {
+    const link = new ArticleLink();
+    link.start = start;
+    link.end = end;
+    link.url = url;
+    return link;
+  }
+}
+
 export class ArticleBlock {
   type: number = ArticleBlockType.PARAGRAPH;
   level: number = 0;
   text: string = '';
+  links: ArticleLink[] = [];
 
-  static of(type: number, level: number, text: string): ArticleBlock {
+  static of(type: number, level: number, text: string, links: ArticleLink[] = []): ArticleBlock {
     const block = new ArticleBlock();
     block.type = type;
     block.level = level;
     block.text = text;
+    block.links = links;
     return block;
   }
 }
@@ -107,10 +123,27 @@ export class ArticleDocument {
       }
       const tail = block.text.substring(0, remaining).trim();
       if (tail.length > 0) {
-        kept.push(ArticleBlock.of(block.type, block.level, tail));
+        const keptBlock = ArticleBlock.of(block.type, block.level, tail);
+        keptBlock.links = ArticleDocument.clampLinks(block.links, tail.length);
+        kept.push(keptBlock);
       }
       break;
     }
     this.blocks = kept;
+  }
+
+  private static clampLinks(links: ArticleLink[], maxLength: number): ArticleLink[] {
+    const kept: ArticleLink[] = [];
+    for (let i = 0; i < links.length; i++) {
+      const link = links[i];
+      if (link.start >= maxLength) {
+        break;
+      }
+      const end = Math.min(link.end, maxLength);
+      if (end > link.start) {
+        kept.push(ArticleLink.of(link.start, end, link.url));
+      }
+    }
+    return kept;
   }
 }

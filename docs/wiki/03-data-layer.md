@@ -22,6 +22,33 @@ setTags/fillTags` 已处理；标签改名/合并/删除也在同一事务内按
 枚举在 [Constants.ets](../../entry/src/main/ets/common/Constants.ets)：`StreamFilter`、`ReadState`、
 `SnapshotStatus`、`BookmarkSource`、`Pane`；`Limits` 定义抓取/快照/标题/描述上限。
 
+### 正文文档与阅读栈
+
+[Article.ets](../../entry/src/main/ets/model/Article.ets) 定义 `ArticleDocument`、`ArticleBlock`、`ArticleLink`：
+
+- `ArticleBlock.links: ArticleLink[]` 保存块内链接区间 `{start, end, url}`，偏移以 `block.text` 的字符下标计；
+  `url` 是已解析的绝对 http(s) 地址。
+- 快照 `FLOWPAGE-ARTICLE-2` 的第三字段保存 `start,end,encodeURIComponent(url)`，多条用 `;` 连接；
+  解码校验区间与长度，非法条目丢弃。`FLOWPAGE-ARTICLE-1` 仍可读，链接为空。
+- `ArticleDocument.truncate()` 截断块文本时同步裁剪链接，避免偏移越界。
+
+### 抽取线程模型与上限
+
+- `ArticleExtractor.extract()` 是纯函数（正则全部模块级复用），既可在 UI 线程同步调用，也可在 taskpool 里跑。
+- 阅读页链路走 worker：[ArticleExtractTask.ets](../../entry/src/main/ets/core/parser/ArticleExtractTask.ets) 是
+  `@Concurrent` 入口，只接收 `html / title / baseUrl` 三个 string，返回 `ArticleCodec.encode()` 的
+  `FLOWPAGE-ARTICLE-2` 字符串；[ArticleExtractService.ets](../../entry/src/main/ets/core/service/ArticleExtractService.ets)
+  在主线程 `ArticleCodec.decode()` 成 `ArticleDocument`。`ArticleDocument`/`ArticleBlock` 不是 Sendable，
+  **不要**把模型对象传给 taskpool。
+- 超时 4 s；taskpool 初始化失败、超时或返回异常时回退主线程同步抽取（保证功能不丢）。
+- 使用方：`ReaderPageLoader.load()`（`MetadataService.fetch(url, true, true)`）与
+  `ReadingShell.extractFromWeb()`。`applyMetadata()` 的元数据补全仍是同步路径。
+- 单次耗时（101,620 字符 / 648 块）：抽取 75–80 ms；含 taskpool 往返、`truncate`、`plainText`、
+  codec 编解码约 150–210 ms。471,912 字符 / 1,150 块约 400–560 ms，仍应留在 worker。
+  不要在 UI 线程循环调用抽取（例如逐块/逐页重抽）。
+- [ReadingEntry.ets](../../entry/src/main/ets/model/ReadingEntry.ets) 的 `ReadingEntry` / `ReadingSeed` 是
+  `ReadingShell` 的运行时模型，**不落盘**：临时页的块位置只存内存，不写 `flowpage_reader`。
+
 ## 2. 表结构
 
 [Database.ets](../../entry/src/main/ets/core/db/Database.ets) 创建 `flowpage.db`（security level S1），六张表：
@@ -123,7 +150,7 @@ setTags/fillTags` 已处理；标签改名/合并/删除也在同一事务内按
 
 | 位置 | 内容 |
 |---|---|
-| `filesDir/snapshots/<id>.txt` | 正文纯文本快照，上限 200 KiB（按字符截断）；不参与同步 |
+| `filesDir/snapshots/<id>.txt` | 正文结构化快照（`FLOWPAGE-ARTICLE-2`，含块类型/文本/链接区间），上限 200 KiB（按字符截断）；不参与同步 |
 | RDB `flowpage.db` | 书签、标签、冲突、墓碑、同步状态表 |
 | preferences `flowpage_settings` | `theme_mode`、`reading_size` |
 | preferences `flowpage_sync` | `webdav_config`（含加密密码与服务器指纹）、`last_sync`、旧版兼容键 |

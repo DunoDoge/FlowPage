@@ -8,7 +8,7 @@ import {
 } from '@kit.ArkUI';
 import { AppState } from '../common/AppState';
 import { ArticleSignature } from '../common/ArticleSignature';
-import { HighlightSegment, highlightSegments } from '../common/Highlight';
+import { ReaderSegment, readerSegments } from '../common/ReaderSegments';
 import { ReaderPrefs } from '../common/ReaderPrefs';
 import { ReaderSettings } from '../common/ReaderSettings';
 import { readerBlockProgress, readerProgressRatio } from '../common/ReaderProgress';
@@ -19,6 +19,9 @@ import { Bookmark } from '../model/Bookmark';
 import { ReadState, SnapshotStatus } from '../common/Constants';
 import { FlowRepository } from '../repository/FlowRepository';
 
+const INITIAL_BLOCKS: number = 200;
+const BLOCK_BATCH: number = 200;
+
 @ComponentV2
 export struct ReaderView {
   @Param bookmark: Bookmark = new Bookmark();
@@ -27,11 +30,19 @@ export struct ReaderView {
   @Param compact: boolean = false;
   @Param immersive: boolean = false;
   @Param loading: boolean = false;
+  @Param externalChrome: boolean = false;
+  @Param transient: boolean = false;
+  @Param initialBlock: number = -1;
+  @Param savedOnce: boolean = false;
   @Event onClose: () => void = () => {};
   @Event onOpenImmersive: () => void = () => {};
   @Event onRetry: () => void = () => {};
   @Event onReadComplete: () => void = () => {};
   @Event onExcerptSaved: (excerpt: string) => void = (excerpt: string) => {};
+  @Event onOpenLink: (url: string) => void = (url: string) => {};
+  @Event onOpenBrowser: () => void = () => {};
+  @Event onSavePage: () => void = () => {};
+  @Event onPositionChanged: (index: number) => void = (index: number) => {};
 
   @Local settings: ReaderSettings = ReaderSettings.shared;
   @Local toc: ReaderTocEntry[] = [];
@@ -44,6 +55,7 @@ export struct ReaderView {
   @Local matchCursor: number = -1;
   @Local progress: number = 0;
   @Local blockFirst: number = 0;
+  @Local visibleCount: number = INITIAL_BLOCKS;
   @Local readReported: boolean = false;
   @Local selectedText: string = '';
   private scroller: Scroller = new Scroller();
@@ -55,6 +67,7 @@ export struct ReaderView {
   private anchorTimer: number = -1;
   private progressTimer: number = -1;
   private pendingSearchIndex: number = -1;
+  private pendingJumpIndex: number = -1;
   private blockOffsets: number[] = [];
   private blockHeights: number[] = [];
   private measuredBlocks: number = 0;
@@ -62,8 +75,10 @@ export struct ReaderView {
   private viewportHeight: number = 0;
   private positionReady: boolean = false;
   private articleSignature: string = '';
+  private extendAt: number = 0;
 
   aboutToAppear(): void {
+    this.visibleCount = Math.min(INITIAL_BLOCKS, this.article.blocks.length);
     this.settings.load(getContext(this));
     this.restoreAttempts = 0;
     this.articleSignature = ArticleSignature.of(this.article);
@@ -91,6 +106,7 @@ export struct ReaderView {
     this.matches = [];
     this.matchCursor = -1;
     this.pendingSearchIndex = -1;
+    this.pendingJumpIndex = -1;
     this.showToc = false;
     this.showSettings = false;
     if (this.immersive) {
@@ -109,6 +125,7 @@ export struct ReaderView {
     this.matches = [];
     this.matchCursor = -1;
     this.pendingSearchIndex = -1;
+    this.pendingJumpIndex = -1;
     this.searching = false;
     this.showToc = false;
     this.showSettings = false;
@@ -133,6 +150,8 @@ export struct ReaderView {
     this.contentBottom = 0;
     this.positionReady = false;
     this.restoreAttempts = 0;
+    this.visibleCount = Math.min(INITIAL_BLOCKS, this.article.blocks.length);
+    this.extendAt = 0;
   }
 
   private clearSearchTimer(): void {
@@ -170,6 +189,43 @@ export struct ReaderView {
     return this.bookmarkId.length > 0 ? this.bookmarkId : this.bookmark.id;
   }
 
+  private shownBlocks(): ArticleBlock[] {
+    if (this.visibleCount >= this.article.blocks.length) {
+      return this.article.blocks;
+    }
+    return this.article.blocks.slice(0, this.visibleCount);
+  }
+
+  private ensureMounted(index: number): void {
+    const total = this.article.blocks.length;
+    if (index < 0 || index >= total || index < this.visibleCount) {
+      return;
+    }
+    const target = Math.min(total, this.visibleCount + BLOCK_BATCH);
+    this.visibleCount = target;
+  }
+
+  private extendBlocks(): void {
+    const total = this.article.blocks.length;
+    if (this.visibleCount >= total) {
+      return;
+    }
+    const now = Date.now();
+    if (now - this.extendAt < 300) {
+      return;
+    }
+    this.extendByUser();
+  }
+
+  private extendByUser(): void {
+    const total = this.article.blocks.length;
+    if (this.visibleCount >= total) {
+      return;
+    }
+    this.extendAt = Date.now();
+    this.visibleCount = Math.min(total, this.visibleCount + BLOCK_BATCH);
+  }
+
   private rebuildToc(): void {
     const entries: ReaderTocEntry[] = [];
     for (let i = 0; i < this.article.blocks.length; i++) {
@@ -199,11 +255,17 @@ export struct ReaderView {
       this.positionReady = true;
       return;
     }
-    const saved = ReaderPrefs.readPosition(getContext(this), this.currentId());
+    let saved = 0;
+    if (this.initialBlock >= 0) {
+      saved = this.initialBlock;
+    } else if (!this.transient) {
+      saved = ReaderPrefs.readPosition(getContext(this), this.currentId());
+    }
     if (saved > 0 && this.immersive) {
       const index = Math.min(saved, this.article.blocks.length - 1);
+      this.ensureMounted(index);
       const offset = index < this.blockOffsets.length ? this.blockOffsets[index] : -1;
-      if (!(offset > 0) && this.restoreAttempts < 5) {
+      if (!(offset > 0) && this.restoreAttempts < 10) {
         this.restoreAttempts = this.restoreAttempts + 1;
         this.restoring = false;
         this.scheduleRestore();
@@ -218,6 +280,7 @@ export struct ReaderView {
         this.positionReady = false;
       }
     } else {
+      this.resetScrollOffset();
       this.positionReady = true;
     }
     this.restoreAttempts = 0;
@@ -226,14 +289,25 @@ export struct ReaderView {
     }, 160);
   }
 
+  private resetScrollOffset(): void {
+    try {
+      this.scroller.scrollTo({ xOffset: 0, yOffset: 0 });
+    } catch (error) {
+      // the scroller may not be bound yet
+    }
+  }
+
   private savePosition(): void {
     if (!this.immersive || this.article.blocks.length === 0 || this.restoring || !this.positionReady) {
       return;
     }
-    if (this.measuredBlocks < this.article.blocks.length) {
+    if (this.blockFirst > 0 && !(this.blockOffsets[this.blockFirst] > 0)) {
       return;
     }
-    ReaderPrefs.writePosition(getContext(this), this.currentId(), this.blockFirst);
+    this.onPositionChanged(this.blockFirst);
+    if (!this.transient) {
+      ReaderPrefs.writePosition(getContext(this), this.currentId(), this.blockFirst);
+    }
   }
 
   private lastBlockBottom(): number {
@@ -247,7 +321,14 @@ export struct ReaderView {
   }
 
   private updateProgress(offset: number): void {
-    if (this.measuredBlocks < this.article.blocks.length) {
+    if (this.measuredBlocks < this.visibleCount) {
+      return;
+    }
+    if (this.visibleCount < this.article.blocks.length) {
+      const ratio = readerBlockProgress(this.blockIndexAt(offset), this.article.blocks.length);
+      if (Math.abs(ratio - this.progress) >= 0.005) {
+        this.progress = ratio;
+      }
       return;
     }
     const bottom = this.contentBottom > 0 ? this.contentBottom : this.lastBlockBottom();
@@ -268,7 +349,7 @@ export struct ReaderView {
     this.clearProgressTimer();
     this.progressTimer = setTimeout(() => {
       this.progressTimer = -1;
-      if (!this.restoring && this.measuredBlocks === this.article.blocks.length) {
+      if (!this.restoring && this.measuredBlocks === this.visibleCount) {
         this.updateProgress(this.scroller.currentOffset().yOffset);
       }
     }, 60);
@@ -276,6 +357,11 @@ export struct ReaderView {
 
   private scrollToSearchMatch(index: number): void {
     if (index < 0) {
+      return;
+    }
+    if (index >= this.visibleCount) {
+      this.pendingJumpIndex = index;
+      this.ensureMounted(index);
       return;
     }
     if (index < this.blockOffsets.length) {
@@ -410,8 +496,8 @@ export struct ReaderView {
     this.scrollToSearchMatch(this.matches[next]);
   }
 
-  private segmentsOf(block: ArticleBlock): HighlightSegment[] {
-    return highlightSegments(block.text, this.activeQuery);
+  private segmentsOf(block: ArticleBlock): ReaderSegment[] {
+    return readerSegments(block.text, block.links, this.activeQuery);
   }
 
   private async copySelection(): Promise<void> {
@@ -516,11 +602,14 @@ export struct ReaderView {
               SelectionContainer({ controller: this.selectionController }) {
                 Column() {
                   this.ArticleHeaderItem()
-                  ForEach(this.article.blocks, (block: ArticleBlock, index: number) => {
+                  ForEach(this.shownBlocks(), (block: ArticleBlock, index: number) => {
                     this.BlockItem(block, index)
                   }, (block: ArticleBlock, index: number) => {
                     return `${index}:${block.type}:${block.level}:${block.text.length}:${block.text.slice(0, 24)}`;
                   })
+                  if (this.visibleCount < this.article.blocks.length) {
+                    this.LoadMoreItem()
+                  }
                   this.ArticleFooterItem()
                 }
                 .width('100%')
@@ -548,7 +637,12 @@ export struct ReaderView {
               this.savePosition();
             })
             .onScrollEdge((side: Edge) => {
-              if (side === Edge.Bottom && !this.readReported) {
+              if (side !== Edge.Bottom) {
+                return;
+              }
+              const wasFull = this.visibleCount >= this.article.blocks.length;
+              this.extendBlocks();
+              if (wasFull && !this.readReported) {
                 this.progress = 1;
                 this.readReported = true;
                 this.onReadComplete();
@@ -563,7 +657,8 @@ export struct ReaderView {
       .height('100%')
       .backgroundColor($r('app.color.paper'))
       .onKeyEvent((event: KeyEvent) => {
-        if (event.type === KeyType.Down && event.keyCode === KeyCode.KEYCODE_ESCAPE) {
+        if (!this.externalChrome && event.type === KeyType.Down &&
+          event.keyCode === KeyCode.KEYCODE_ESCAPE) {
           this.onClose();
         }
       })
@@ -594,11 +689,14 @@ export struct ReaderView {
       } else {
         SelectionContainer({ controller: this.selectionController }) {
           Column() {
-            ForEach(this.article.blocks, (block: ArticleBlock, index: number) => {
+            ForEach(this.shownBlocks(), (block: ArticleBlock, index: number) => {
               this.BlockView(block, index)
             }, (block: ArticleBlock, index: number) => {
               return `${index}:${block.type}:${block.level}:${block.text.length}:${block.text.slice(0, 24)}`;
             })
+            if (this.visibleCount < this.article.blocks.length) {
+              this.LoadMoreItem()
+            }
           }
           .width('100%')
           .alignItems(HorizontalAlign.Start)
@@ -619,7 +717,7 @@ export struct ReaderView {
   @Builder
   Toolbar() {
     Row({ space: 2 }) {
-      if (this.immersive) {
+      if (this.immersive && !this.externalChrome) {
         this.ToolButton('关闭', () => this.onClose())
       }
       Blank()
@@ -860,7 +958,7 @@ export struct ReaderView {
                   .padding({ left: 8 + Math.max(0, entry.level - 1) * 14, right: 8 })
                   .onClick(() => {
                     this.showToc = false;
-                    this.scrollToBlock(entry.index);
+                    this.scrollToSearchMatch(entry.index);
                   })
               }
             }, (entry: ReaderTocEntry) => `${entry.index}:${entry.level}:${entry.text.length}`)
@@ -905,15 +1003,21 @@ export struct ReaderView {
           Text('·')
             .fontSize(12)
             .fontColor($r('app.color.ink_tertiary'))
-          Text(formatFullDate(this.bookmark.createdAt))
-            .fontSize(12)
-            .fontColor($r('app.color.ink_tertiary'))
-          Text(this.readLabel())
-            .fontSize(12)
-            .fontColor($r('app.color.ink_secondary'))
+          if (this.transient) {
+            Text('临时阅读')
+              .fontSize(12)
+              .fontColor($r('app.color.ink_secondary'))
+          } else {
+            Text(formatFullDate(this.bookmark.createdAt))
+              .fontSize(12)
+              .fontColor($r('app.color.ink_tertiary'))
+            Text(this.readLabel())
+              .fontSize(12)
+              .fontColor($r('app.color.ink_secondary'))
+          }
         }
         .margin({ top: 10 })
-        if (this.bookmark.tags.length > 0) {
+        if (!this.transient && this.bookmark.tags.length > 0) {
           Flex({ wrap: FlexWrap.Wrap }) {
             ForEach(this.bookmark.tags, (tag: string) => {
               Text(tag)
@@ -943,18 +1047,72 @@ export struct ReaderView {
   }
 
   @Builder
+  LoadMoreItem() {
+    Row() {
+      Text(`继续阅读 · ${this.visibleCount}/${this.article.blocks.length}`)
+        .fontSize(13)
+        .fontColor($r('app.color.ink_secondary'))
+        .border({ width: 1, color: $r('app.color.line_strong') })
+        .borderRadius(6)
+        .height(44)
+        .padding({ left: 14, right: 14 })
+        .accessibilityText('继续阅读更多正文')
+        .focusable(true)
+        .onClick(() => {
+          this.extendByUser();
+        })
+        .onKeyEvent((event: KeyEvent) => {
+          if (event.type === KeyType.Down &&
+            (event.keyCode === KeyCode.KEYCODE_ENTER || event.keyCode === KeyCode.KEYCODE_SPACE)) {
+            this.extendByUser();
+          }
+        })
+    }
+    .width('100%')
+    .justifyContent(FlexAlign.Center)
+    .padding({ top: 20, bottom: 8 })
+  }
+
+  @Builder
   ArticleFooterItem() {
     Row() {
       Column({ space: 6 }) {
         Divider()
           .strokeWidth(1)
           .color($r('app.color.line'))
-        Text(`收于 ${formatFullDate(this.bookmark.createdAt)}`)
-          .fontSize(11)
-          .fontColor($r('app.color.ink_tertiary'))
-        Text(this.article.blocks.length > 0 ? '已存下正文' : '正文待补全')
-          .fontSize(11)
-          .fontColor($r('app.color.ink_tertiary'))
+        if (this.transient) {
+          Text('阅读中的网页')
+            .fontSize(11)
+            .fontColor($r('app.color.ink_tertiary'))
+          Text('关闭后不会保存到书笺')
+            .fontSize(11)
+            .fontColor($r('app.color.ink_tertiary'))
+          Text(this.savedOnce ? '已收藏' : '收藏这一页')
+            .fontSize(12)
+            .fontColor(this.savedOnce ? $r('app.color.ink_tertiary') : $r('app.color.ink'))
+            .height(44)
+            .padding({ right: 12 })
+            .accessibilityText(this.savedOnce ? '已收藏这一页' : '收藏这一页')
+            .focusable(!this.savedOnce)
+            .onClick(() => {
+              if (!this.savedOnce) {
+                this.onSavePage();
+              }
+            })
+            .onKeyEvent((event: KeyEvent) => {
+              if (!this.savedOnce && event.type === KeyType.Down &&
+                (event.keyCode === KeyCode.KEYCODE_ENTER || event.keyCode === KeyCode.KEYCODE_SPACE)) {
+                this.onSavePage();
+              }
+            })
+        } else {
+          Text(`收于 ${formatFullDate(this.bookmark.createdAt)}`)
+            .fontSize(11)
+            .fontColor($r('app.color.ink_tertiary'))
+          Text(this.article.blocks.length > 0 ? '已存下正文' : '正文待补全')
+            .fontSize(11)
+            .fontColor($r('app.color.ink_tertiary'))
+        }
       }
       .width('100%')
       .constraintSize({ maxWidth: 680 })
@@ -988,8 +1146,17 @@ export struct ReaderView {
       if (!(previous > 0) && this.blockHeights[index] > 0) {
         this.measuredBlocks = this.measuredBlocks + 1;
       }
-      if (!this.restoring && this.measuredBlocks === this.article.blocks.length) {
+      if (!this.restoring && this.measuredBlocks === this.visibleCount) {
         this.scheduleProgressUpdate();
+      }
+      if (this.pendingJumpIndex >= 0) {
+        const jumpTarget = this.pendingJumpIndex;
+        if (jumpTarget >= this.visibleCount) {
+          this.ensureMounted(jumpTarget);
+        } else if (jumpTarget < this.blockOffsets.length && this.blockOffsets[jumpTarget] > 0) {
+          this.pendingJumpIndex = -1;
+          this.scrollToBlock(jumpTarget);
+        }
       }
       if (this.pendingSearchIndex >= 0 && this.pendingSearchIndex < this.blockOffsets.length) {
         const pendingOffset = this.blockOffsets[this.pendingSearchIndex];
@@ -1092,25 +1259,35 @@ export struct ReaderView {
 
   @Builder
   StyledText(block: ArticleBlock, size: number, line: number, color: ResourceColor, weight: FontWeight) {
-    if (this.activeQuery.trim().length > 0) {
+    if (block.links.length > 0 || this.activeQuery.trim().length > 0) {
       Text() {
-        ForEach(this.segmentsOf(block), (segment: HighlightSegment, index: number) => {
-          if (segment.matched) {
-            ContainerSpan() {
-              Span(segment.text)
-                .fontSize(size)
-                .fontColor(color)
-                .fontWeight(weight)
-            }
-            .textBackgroundStyle({ color: $r('app.color.highlight') })
+        ForEach(this.segmentsOf(block), (segment: ReaderSegment, index: number) => {
+          if (segment.url.length > 0) {
+            Span(segment.text)
+              .fontSize(size)
+              .fontColor(color)
+              .fontWeight(weight)
+              .decoration({ type: TextDecorationType.Underline, color: $r('app.color.ink_tertiary') })
+              .textBackgroundStyle({
+                color: segment.matched ? $r('app.color.highlight') : Color.Transparent
+              })
+              .onClick(() => {
+                this.onOpenLink(segment.url);
+              })
+          } else if (segment.matched) {
+            Span(segment.text)
+              .fontSize(size)
+              .fontColor(color)
+              .fontWeight(weight)
+              .textBackgroundStyle({ color: $r('app.color.highlight') })
           } else {
             Span(segment.text)
               .fontSize(size)
               .fontColor(color)
               .fontWeight(weight)
           }
-        }, (segment: HighlightSegment, index: number) => {
-          return `${index}:${segment.matched ? 1 : 0}:${segment.text.length}`;
+        }, (segment: ReaderSegment, index: number) => {
+          return `${index}:${segment.matched ? 1 : 0}:${segment.url.length}:${segment.text.length}`;
         })
       }
       .fontSize(size)
@@ -1137,47 +1314,71 @@ export struct ReaderView {
         .onClick(() => {
           this.copySelection().catch(() => {});
         })
-      MenuItem({ content: '存为摘录' })
-        .onClick(() => {
-          this.saveExcerpt(this.selectedText).catch(() => {});
-        })
+      if (!this.transient) {
+        MenuItem({ content: '存为摘录' })
+          .onClick(() => {
+            this.saveExcerpt(this.selectedText).catch(() => {});
+          })
+      }
     }
   }
 
   @Builder
   EmptyBody() {
     Column({ space: 12 }) {
-      Text(this.bookmark.snapshotStatus === SnapshotStatus.OFF ? '自动快照已关闭。' : '这条还没存下正文。')
-        .fontSize(15)
-        .fontColor($r('app.color.ink_secondary'))
-      if (this.bookmark.snapshotStatus === SnapshotStatus.OFF) {
-        Text('可以在「设置 → 自动保存正文快照」中重新开启。')
+      if (this.transient) {
+        Text('没能翻出这一页的正文。')
+          .fontSize(15)
+          .fontColor($r('app.color.ink_secondary'))
+        Text('可以试试在浏览器里看。')
           .fontSize(13)
           .fontColor($r('app.color.ink_tertiary'))
-      } else {
-        Text(this.loading ? '正在抓取…' : '重试抓取')
-          .fontSize(13)
-          .fontColor($r('app.color.ink'))
-          .border({ width: 1, color: $r('app.color.line_strong') })
-          .borderRadius(6)
-          .height(44)
-          .padding({ left: 12, right: 12 })
-          .accessibilityText('重新抓取正文')
-          .focusable(true)
-          .onClick(() => {
+        Row({ space: 12 }) {
+          this.TransientAction(this.loading ? '正在抓取…' : '重试', () => {
             if (!this.loading) {
               this.onRetry();
             }
           })
-          .onKeyEvent((event: KeyEvent) => {
-            if (event.type === KeyType.Down &&
-              (event.keyCode === KeyCode.KEYCODE_ENTER || event.keyCode === KeyCode.KEYCODE_SPACE)) {
+          this.TransientAction('在浏览器打开', () => this.onOpenBrowser())
+        }
+      } else {
+        Text(this.bookmark.snapshotStatus === SnapshotStatus.OFF ? '自动快照已关闭。' : '这条还没存下正文。')
+          .fontSize(15)
+          .fontColor($r('app.color.ink_secondary'))
+        if (this.bookmark.snapshotStatus === SnapshotStatus.OFF) {
+          Text('可以在「设置 → 自动保存正文快照」中重新开启。')
+            .fontSize(13)
+            .fontColor($r('app.color.ink_tertiary'))
+        } else {
+          this.TransientAction(this.loading ? '正在抓取…' : '重试抓取', () => {
+            if (!this.loading) {
               this.onRetry();
             }
           })
+        }
       }
     }
     .alignItems(HorizontalAlign.Start)
     .padding({ top: 12, bottom: 12 })
+  }
+
+  @Builder
+  TransientAction(label: string, action: () => void) {
+    Text(label)
+      .fontSize(13)
+      .fontColor($r('app.color.ink'))
+      .border({ width: 1, color: $r('app.color.line_strong') })
+      .borderRadius(6)
+      .height(44)
+      .padding({ left: 12, right: 12 })
+      .accessibilityText(label)
+      .focusable(true)
+      .onClick(action)
+      .onKeyEvent((event: KeyEvent) => {
+        if (event.type === KeyType.Down &&
+          (event.keyCode === KeyCode.KEYCODE_ENTER || event.keyCode === KeyCode.KEYCODE_SPACE)) {
+          action();
+        }
+      })
   }
 }
