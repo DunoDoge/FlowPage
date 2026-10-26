@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <!-- FlowPage 图标 · 背景层（background.png 源）
+       满幅 1024×1024，不自切圆角（系统施加遮罩）、不加内边距。
+       纸色纵向微渐变（上浅下深）+ 淡光感勾边。 -->
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FCFBF7"/>
+      <stop offset=".6" stop-color="#F6F4EE"/>
+      <stop offset="1" stop-color="#EBE7DC"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" fill="url(#paper)"/>
+</svg>

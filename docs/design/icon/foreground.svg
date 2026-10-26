@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <!-- FlowPage 图标 · 前景层（foreground.png 源）
+       透明底；系统按 layered_image.json 与背景层合成后施加统一圆角遮罩。
+       主体：书签 + 三条波浪（渐次收短渐淡），ink 描边，朱砂绳点睛。 -->
+  <defs>
+    <filter id="lift" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#121211" flood-opacity=".15"/>
+    </filter>
+  </defs>
+
+  <!-- 书签：宽 240，暖白填充 + 轻投影，形成前后景层次 -->
+  <path d="M172 240 L412 240 L412 784 L292 704 L172 784 Z"
+        fill="#FDFCF8" stroke="#121211" stroke-width="48"
+        stroke-linejoin="round" filter="url(#lift)"/>
+
+  <!-- 顶部圆孔 + 朱砂绳（唯一品牌色） -->
+  <circle cx="292" cy="348" r="26" stroke="#121211" stroke-width="22"/>
+  <path d="M292 380 C292 452 264 486 264 546"
+        stroke="#C13B2A" stroke-width="22" stroke-linecap="round"/>
+
+  <!-- 波浪：等长，墨色向下渐淡 -->
+  <g stroke="#121211" stroke-width="48" stroke-linecap="round">
+    <path d="M492 336 S582 300 672 336 S762 372 852 336"/>
+    <path d="M492 512 S582 476 672 512 S762 548 852 512" stroke-opacity=".9"/>
+    <path d="M492 688 S582 652 672 688 S762 724 852 688" stroke-opacity=".8"/>
+  </g>
+</svg>
