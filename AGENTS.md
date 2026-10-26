@@ -13,7 +13,7 @@
 | 状态 | `@ObservedV2` + `@Trace` + `@ComponentV2` + `@Local` / `@Param` / `@Event` / `@Monitor` |
 | 数据 | RDB `flowpage.db`（6 表 + 7 索引）、preferences、`filesDir/snapshots/*.txt` |
 | 同步 | WebDAV（Basic Auth），ETag 增量 + LWW；无分布式 KV、无账号体系 |
-| 测试 | `@ohos/hypium`，`entry/src/ohosTest` 11 个套件 / 119 个用例，仅设备端 |
+| 测试 | `@ohos/hypium`，`entry/src/ohosTest` 12 个套件 / 130 个用例，仅设备端 |
 
 ## 构建与验证（顺序有讲究）
 
@@ -89,19 +89,30 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
 
 ## 性能约束（阅读页）
 
-- **禁止在 UI 线程循环调用 `ArticleExtractor.extract()`**。阅读页链路（`ReaderPageLoader.load()`、
-  `ReadingShell.extractFromWeb()`）必须走 `ArticleExtractService.extractAsync()`（taskpool，4 s 超时 + 同步回退）；
-  同步抽取只留给 `applyMetadata()` 这类一次性后台任务。`ArticleDocument` 不是 Sendable，跨线程只传 HTML 与
-  `ArticleCodec` 字符串。
+- **禁止在 UI 线程循环调用 `ArticleExtractor.extract()` 或 `ReaderSearchCore.searchBlocks()`**。阅读页链路
+  （`ReaderPageLoader.load()`、`ReadingShell.extractFromWeb()`、`FlowRepository.applyMetadata()`）必须走
+  `ArticleExtractService.extractAsync()`（taskpool，4 s 超时 + 同步回退）；阅读页搜索必须走
+  `ReaderSearchService.search()`（taskpool，2 s 超时 + 同步回退，索引构建 ≤10 ms 留 UI 线程一次性）。
+  `ArticleDocument` 不是 Sendable，跨线程只传 HTML 与 `ArticleCodec` 字符串/`number[]`。
 - 热点正则必须模块级复用（`ArticleExtractor`、`MetadataService` 均如此），不要在函数内 `new RegExp`
   或堆重复 `replace` 链；改动抽取器后要复测耗时。
 - transient 页性能预算（Pura 70 / 648 块 / 101,620 字符）：首屏布局 ≤ 600 ms，单次「点击链接→新页可读」
-  ≤ 1.7 s。`ReaderView` 首屏 `INITIAL_BLOCKS=200`、每次 `BLOCK_BATCH=200`，**不要**一次挂载整篇
-  （实测 648 块一次挂载约 3 s、VmRSS 553 MB）；改窗口/恢复/搜索逻辑后要复测
-  `uitest dumpLayout` 节点数、`VmRSS` 与 1/5/10/20 次下钻。
+  ≤ 1.7 s。模拟器口径（2026-10-25 第三轮）：layout 中位 259 ms、click→layoutDone 672 ms、
+  leaf500(1,999 块) layout 272 ms / 总 1,048 ms。`ReaderView` 首屏 `INITIAL_BLOCKS=200`、每次
+  `BLOCK_BATCH=200`，**不要**一次挂载整篇（实测 648 块一次挂载约 3 s、VmRSS 553 MB）；改窗口/恢复/搜索
+  逻辑后要复测 `uitest dumpLayout` 节点数、`VmRSS` 与 1/5/10/20 次下钻。
+- **下钻整帧间隔由新页 200 块构建主导**（第三轮对照实验：初次打开 ≈ 下钻 layout），旧页销毁边际成本
+  ≈0–20 ms——不要再把该帧归因给「拆解」，也不要为拆解引入双槽延迟销毁（收益/风险倒挂，已评估否决）。
 - 改 `ReaderView` 必须保留：目录、进度、位置恢复（含窗口外块）、搜索命中、链接点击、临时页「收藏这一页」。
+  **已知边角（未修）**：位置恢复到窗口外块在超大页上时序敏感（10×200 ms 重试内测量未完成即耗尽则回落顶部
+  且进度条残留目标值，第三轮 4 试 1 失）；改恢复逻辑时优先验证 leaf500 尾部恢复。
+- **阅读栈内存形态机**：`ReadingShell.back()` 出栈即裁 `entries` 尾部（被弹层无前进路径）；push 后 600 ms
+  空闲把非当前层 article 压为 `ArticleCodec.encode()` 串（`entry.compact`），pop 回时 decode（12–15 ms/648 块，
+  ≪100 ms 门限）。改栈逻辑必须保持这两条不变量，并复测 20 层 VmRSS。
 - 判断主线程阻塞用 20 ms `setInterval` 心跳并记录最大间隔；只看 hilog 阶段时间戳会把「上一页拆解/GC」
-  误判成网络耗时。
+  误判成网络耗时。模拟器测量注意：连续 `dumpLayout`+`hdc file recv` 会触发病毒扫描风暴污染心跳
+  （出现过 6.7–8.1 s 假阻塞），心跳采样必须在无并发 hdc 操作的静默窗口；`uitest keyEvent`（ESC）在长会话
+  后可能被系统焦点吞掉，UI 驱动 pop 用界面「返回」按钮。
 
 ## 代码约定
 

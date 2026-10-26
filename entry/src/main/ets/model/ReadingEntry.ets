@@ -20,6 +20,8 @@ export class ReadingEntry {
   @Trace savedOnce: boolean = false;
   @Trace bookmark: Bookmark = new Bookmark();
   bookmarkId: string = '';
+  // compact article form while the entry is not the current reading layer
+  compact: string = '';
 }
 
 export class ReadingSeed {

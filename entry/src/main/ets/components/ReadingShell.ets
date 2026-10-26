@@ -7,6 +7,8 @@ import { BookmarkSource, ReadState } from '../common/Constants';
 import { domainOf, isSameUrl, normalizeUrl } from '../common/UrlUtil';
 import { decodeWebHtml } from '../common/WebHtmlCodec';
 import { ArticleExtractService } from '../core/service/ArticleExtractService';
+import { ArticleCodec } from '../core/service/ArticleCodec';
+import { ArticleDocument } from '../model/Article';
 import { ReaderPageLoader } from '../core/service/ReaderPageLoader';
 import { Bookmark } from '../model/Bookmark';
 import { MetadataApplyResult } from '../model/MetadataResult';
@@ -48,6 +50,7 @@ export struct ReadingShell {
   private webController: webview.WebviewController = new webview.WebviewController();
   private pendingUrl: string = '';
   private disposed: boolean = false;
+  private compactTimer: number = -1;
   private extracting: boolean = false;
 
   aboutToAppear(): void {
@@ -59,6 +62,10 @@ export struct ReadingShell {
     this.browserActive = false;
     this.webMounted = false;
     this.appState.readingCanGoBack = false;
+    if (this.compactTimer >= 0) {
+      clearTimeout(this.compactTimer);
+      this.compactTimer = -1;
+    }
   }
 
   @Monitor('appState.readingTick')
@@ -172,7 +179,51 @@ export struct ReadingShell {
     this.entries = this.entries.slice(0);
     this.index = this.entries.length - 1;
     this.syncBackState();
+    this.scheduleCompactIdle();
     return true;
+  }
+
+  // Non-current layers keep only an encoded article until visited again; the
+  // encode itself waits for an idle gap so it never lands on the push path.
+  private scheduleCompactIdle(): void {
+    if (this.compactTimer >= 0) {
+      clearTimeout(this.compactTimer);
+    }
+    this.compactTimer = setTimeout(() => {
+      this.compactTimer = -1;
+      this.compactNonCurrent();
+    }, 600);
+  }
+
+  private compactNonCurrent(): void {
+    if (this.disposed) {
+      return;
+    }
+    for (let i = 0; i < this.entries.length; i++) {
+      if (i === this.index) {
+        continue;
+      }
+      const entry = this.entries[i];
+      if (entry.compact.length > 0 || entry.article.blocks.length === 0 || entry.loading) {
+        continue;
+      }
+      entry.compact = ArticleCodec.encode(entry.article);
+      entry.article = new ArticleDocument();
+    }
+  }
+
+  private expandCompacted(entry: ReadingEntry): void {
+    if (entry.compact.length === 0) {
+      return;
+    }
+    // retryCurrent() writes the article back after loading goes false; if a
+    // compact landed in that gap the live article is fresher than the copy.
+    if (entry.article.blocks.length > 0) {
+      entry.compact = '';
+      return;
+    }
+    entry.article = ArticleCodec.decode(entry.compact);
+    entry.compact = '';
   }
 
   private createTransientEntry(target: string, mode: number): ReadingEntry {
@@ -392,6 +443,8 @@ export struct ReadingShell {
     if (this.index > 0) {
       const wasMounted = this.webMounted && this.browserActive;
       this.index = this.index - 1;
+      // popped layers have no forward path; drop them for immediate GC
+      this.entries = this.entries.slice(0, this.index + 1);
       this.prepareCurrentAfterPop(wasMounted);
       return;
     }
@@ -400,6 +453,7 @@ export struct ReadingShell {
 
   private prepareCurrentAfterPop(wasMounted: boolean): void {
     const entry = this.currentEntry();
+    this.expandCompacted(entry);
     this.browserError = '';
     this.browserProgress = 0;
     this.webTitle = entry.title;

@@ -326,7 +326,7 @@ export class FlowRepository {
       return MetadataApplyResult.FAILED;
     }
     const autoSnapshot = this.autoSnapshotEnabled();
-    const metadata = await MetadataService.fetch(bookmark.url, autoSnapshot);
+    const metadata = await MetadataService.fetch(bookmark.url, autoSnapshot, true);
     if (!metadata.success) {
       return MetadataApplyResult.FAILED;
     }

@@ -30,7 +30,7 @@ ArkTS + ArkUI 声明式 UI，状态管理 V2；本地 RDB 是唯一事实源，W
 | UI | ArkTS + ArkUI，`@ComponentV2` / `@ObservedV2`；只有卡片用 V1 |
 | 数据 | RDB `flowpage.db`：bookmark / tag / bookmark_tag / conflict / sync_state / tombstone |
 | 同步 | WebDAV Basic Auth，`FlowPage/v1/` 布局，ETag + LWW + 墓碑 |
-| 测试 | Hypium 设备端 11 套件 / 119 用例 |
+| 测试 | Hypium 设备端 12 套件 / 130 用例 |
 
 ## 功能与实现入口
 

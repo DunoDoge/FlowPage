@@ -74,7 +74,7 @@ hdc shell aa start -a EntryAbility -b com.dunodoge.flowpage
 
 ## 5. 设备端测试
 
-测试位于 `entry/src/ohosTest`，11 个套件、119 个 Hypium 用例（2026-10-22 内置浏览器/链接阅读批次；手机 119/119）：
+测试位于 `entry/src/ohosTest`，12 个套件、130 个 Hypium 用例（2026-10-25 阅读性能第三轮后；模拟器 130/130）：
 
 | 套件 | 覆盖 |
 |---|---|
@@ -85,6 +85,7 @@ hdc shell aa start -a EntryAbility -b com.dunodoge.flowpage
 | `TagSyncTest` | 标签改名/合并/删除 dirty 与 `search_text` 重建、只含目标标签的书签不受影响、重名合并、回收站计数 |
 | `SnapshotTest` | clearAll/purgeExpired/purge/purgeFromRemote 快照文件清理 |
 | `ReaderTest` | 正文提取容器/teaser/junk 规则、标题去重、发布结果分类、阅读进度、链接偏移/相对解析/非法协议、快照 v2 编解码、截断裁剪、搜索与链接分段 |
+| `ReaderSearchTest` | 纯函数命中等价性（多命中/大小写/边界不跨块/含分隔符/空输入）、buildIndex 偏移、searchSync 等价、taskpool 异步等价、解码容错 |
 | `ConflictTest` | 冲突计数、列表、恢复本地/采用远端、采用远端保留 folderPath/source |
 | `RepositoryTest` | 单次编辑 rev、阅读状态、自动快照开关、摘要口径、批次回滚、卡片序列化与 preferences 往返、纯函数 |
 | `QueryTest` | SQL 分页、关键字/标签过滤、LIKE 转义、域名排序、冷/热查询基准 |

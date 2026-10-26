@@ -41,13 +41,21 @@ setTags/fillTags` 已处理；标签改名/合并/删除也在同一事务内按
   在主线程 `ArticleCodec.decode()` 成 `ArticleDocument`。`ArticleDocument`/`ArticleBlock` 不是 Sendable，
   **不要**把模型对象传给 taskpool。
 - 超时 4 s；taskpool 初始化失败、超时或返回异常时回退主线程同步抽取（保证功能不丢）。
-- 使用方：`ReaderPageLoader.load()`（`MetadataService.fetch(url, true, true)`）与
-  `ReadingShell.extractFromWeb()`。`applyMetadata()` 的元数据补全仍是同步路径。
+- 使用方：`ReaderPageLoader.load()`（`MetadataService.fetch(url, true, true)`）、`ReadingShell.extractFromWeb()`、
+  `FlowRepository.applyMetadata()`（第三轮起显式 `offThread=true`——同步抽取热点已全部迁移 worker）。
 - 单次耗时（101,620 字符 / 648 块）：抽取 75–80 ms；含 taskpool 往返、`truncate`、`plainText`、
   codec 编解码约 150–210 ms。471,912 字符 / 1,150 块约 400–560 ms，仍应留在 worker。
   不要在 UI 线程循环调用抽取（例如逐块/逐页重抽）。
+- **阅读页搜索同模式**：[ReaderSearchCore.ets](../../entry/src/main/ets/core/parser/ReaderSearchCore.ets) 纯函数
+  （块内 containment、跨块/含分隔符不命中）+ [ReaderSearchTask.ets](../../entry/src/main/ets/core/parser/ReaderSearchTask.ets)
+  （`@Concurrent`，只收 `string`/`number[]`，返回逗号分隔命中下标串）+
+  [ReaderSearchService.ets](../../entry/src/main/ets/core/service/ReaderSearchService.ets)（`buildIndex` + taskpool +
+  2 s 超时 + 同步回退）。索引构建 1,999 块约 6 ms，一次性留在 UI 线程；检索 1,999 块全量同步循环约 156 ms，
+  走 worker 后主线程零阻塞。纯函数等价性由 `ReaderSearch.test.ets`（11 例）覆盖。
 - [ReadingEntry.ets](../../entry/src/main/ets/model/ReadingEntry.ets) 的 `ReadingEntry` / `ReadingSeed` 是
   `ReadingShell` 的运行时模型，**不落盘**：临时页的块位置只存内存，不写 `flowpage_reader`。
+  `ReadingEntry.compact` 是非当前层的 `ArticleCodec.encode()` 串（阅读栈内存形态机的紧凑形态，见 wiki/02），
+  同样不落盘、不同步。
 
 ## 2. 表结构
 

@@ -18,6 +18,7 @@ import { ArticleBlock, ArticleBlockType, ArticleDocument, ReaderTocEntry } from 
 import { Bookmark } from '../model/Bookmark';
 import { ReadState, SnapshotStatus } from '../common/Constants';
 import { FlowRepository } from '../repository/FlowRepository';
+import { ReaderSearchIndex, ReaderSearchService } from '../core/service/ReaderSearchService';
 
 const INITIAL_BLOCKS: number = 200;
 const BLOCK_BATCH: number = 200;
@@ -76,6 +77,9 @@ export struct ReaderView {
   private positionReady: boolean = false;
   private articleSignature: string = '';
   private extendAt: number = 0;
+  private searchIndex: ReaderSearchIndex | null = null;
+  private searchSignature: string = '';
+  private searchGeneration: number = 0;
 
   aboutToAppear(): void {
     this.visibleCount = Math.min(INITIAL_BLOCKS, this.article.blocks.length);
@@ -91,6 +95,8 @@ export struct ReaderView {
   aboutToDisappear(): void {
     this.savePosition();
     this.clearTimers();
+    // also invalidates in-flight search callbacks via the generation bump
+    this.releaseSearchIndex();
   }
 
   @Monitor('article')
@@ -102,6 +108,7 @@ export struct ReaderView {
     this.articleSignature = signature;
     this.resetReaderState();
     this.rebuildToc();
+    this.releaseSearchIndex();
     this.activeQuery = '';
     this.matches = [];
     this.matchCursor = -1;
@@ -130,6 +137,7 @@ export struct ReaderView {
     this.showToc = false;
     this.showSettings = false;
     this.articleSignature = '';
+    this.releaseSearchIndex();
     this.rebuildToc();
     if (this.immersive) {
       this.scheduleRestore();
@@ -449,15 +457,35 @@ export struct ReaderView {
     if (needle.length === 0) {
       return;
     }
-    for (let i = 0; i < this.article.blocks.length; i++) {
-      if (this.article.blocks[i].text.toLowerCase().indexOf(needle) >= 0) {
-        this.matches.push(i);
+    this.searchGeneration = this.searchGeneration + 1;
+    const generation = this.searchGeneration;
+    const index = this.ensureSearchIndex();
+    ReaderSearchService.search(index, needle).then((hits: number[]) => {
+      if (generation !== this.searchGeneration) {
+        return;
       }
+      this.matches = hits;
+      if (this.matches.length > 0) {
+        this.matchCursor = 0;
+        this.scrollToSearchMatch(this.matches[0]);
+      }
+    });
+  }
+
+  private ensureSearchIndex(): ReaderSearchIndex {
+    if (this.searchIndex !== null && this.searchSignature === this.articleSignature) {
+      return this.searchIndex;
     }
-    if (this.matches.length > 0) {
-      this.matchCursor = 0;
-      this.scrollToSearchMatch(this.matches[0]);
-    }
+    const index = ReaderSearchService.buildIndex(this.article);
+    this.searchIndex = index;
+    this.searchSignature = this.articleSignature;
+    return index;
+  }
+
+  private releaseSearchIndex(): void {
+    this.searchIndex = null;
+    this.searchSignature = '';
+    this.searchGeneration = this.searchGeneration + 1;
   }
 
   private queryChanged(value: string): void {
@@ -479,6 +507,7 @@ export struct ReaderView {
     this.matches = [];
     this.matchCursor = -1;
     this.pendingSearchIndex = -1;
+    this.releaseSearchIndex();
   }
 
   private nextMatch(delta: number): void {

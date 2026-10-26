@@ -51,15 +51,23 @@
 - **ReaderView 分窗挂载**：首屏只渲染前 `INITIAL_BLOCKS=200` 块（`visibleCount`），
   `SelectionContainer` 只包住已挂载块，单页节点数与内存随窗口而非全文增长。滚到已渲染内容底部
   （`onScrollEdge(Bottom)`）或点底部「继续阅读 · n/total」时按 `BLOCK_BATCH=200` 追加。
-  目录/搜索跳转先 `ensureMounted(index)`；位置恢复若目标在窗口外会扩窗并重试（10 × 200 ms）。
+  目录/搜索跳转先 `ensureMounted(index)`；位置恢复若目标在窗口外会扩窗并重试（10 × 200 ms，
+  超大页上该预算时序敏感——重试耗尽即回落顶部，已知边角见 AGENTS.md）。
   未全量挂载时进度按块下标估算，全量挂载后仍用像素比例；批次边界不会提前标记已读（`onReadComplete` 在全量挂载后进度 ≥90% 或到达末尾时触发）。
   实测 648 块页面：专注阅读首帧 2.5 s → 0.4 s，单次链接点击的主线程阻塞 5.7–7.2 s → 0.36–0.53 s。
+- **ReaderView 搜索走 taskpool**：`applySearch` 异步化——索引（小写全文 + 每块偏移）按 `articleSignature`
+  惰性构建并缓存（1,999 块约 6 ms，一次性留在 UI 线程），检索交给 `ReaderSearchService`（2 s 超时 + 同步回退），
+  世代 token 丢弃过期结果；关闭搜索或换文/换书签时释放索引。命中集合与同步扫描严格等价
+  （大小写不敏感、块内 containment、不跨块）。
 - “专注阅读”打开 [ReadingShell.ets](../../entry/src/main/ets/components/ReadingShell.ets)（`Index` 根部
   `bindContentCover`，`enableSafeArea=true`）；`ReadingShell` 统一承载阅读栈与内置 Web，`ReaderView` 负责正文排版。
 - 阅读模式点正文链接：http(s) 文档由 `ReaderPageLoader` 原生抓取后 push 临时条目；非文档链接直接进内置浏览器。
   临时页显示「临时阅读」，不写 RDB/阅读位置，底部与菜单提供「收藏这一页」。
 - 顶部返回/系统返回/ESC 逐层回退：先走 Web 历史，再回到已有正文，再弹出条目，最后关闭覆盖层；
   系统返回由 ContentCover `onWillDismiss` 转为 `readingBackTick`。
+- **阅读栈内存形态机**：`back()` 出栈即裁掉 `entries` 尾部（被弹层无前进路径，直接可 GC）；push 后 600 ms
+  空闲把非当前层 `article` 压为 `ArticleCodec.encode()` 串（`entry.compact`），pop 回到该层时 decode 重建
+  （648 块约 12–15 ms）。20 层下钻后逐层 pop 的 VmRSS 由恒定不降变为递降回收（第三轮实测 419.6 → 380 MB）。
 - 内置浏览器为单标签 ArkWeb：地址可编辑，支持前进/后退/刷新、加载进度与错误态；「阅读」从实时 DOM 提取正文，
   生成新的临时阅读条目；「网页」从阅读模式回到当前 URL。
 - `ReadingShell` 顶栏的阅读/网页切换使用组件内 `@Local mode`，避免 `@Builder` 参数标签不随状态刷新的问题。
