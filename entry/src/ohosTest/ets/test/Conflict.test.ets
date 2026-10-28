@@ -92,10 +92,14 @@ export default function conflictTest() {
       expect(await FlowRepository.get().countConflicts()).assertEqual(0);
     });
 
-    it('resolveKeepsLocalFolderPathAndSource', 0, async () => {
+    it('resolveKeepsLocalFolderAndSource', 0, async () => {
       const dao = new BookmarkDao();
+      const folder = await FlowRepository.get().createFolder('', '稍后读');
+      expect(folder === undefined).assertFalse();
       const bookmark = Bookmark.create('https://example.com/conflict-folder', '原版', BookmarkSource.IMPORT);
-      bookmark.folderPath = '收藏/稍后读';
+      if (folder !== undefined) {
+        bookmark.folderId = folder.id;
+      }
       await dao.insert(bookmark);
       const local = SyncRecord.fromBookmark(bookmark);
       local.title = '本地版本';
@@ -109,9 +113,9 @@ export default function conflictTest() {
       expect(applied).assertTrue();
       const after = await dao.findById(bookmark.id);
       expect(after === undefined).assertFalse();
-      if (after !== undefined) {
+      if (after !== undefined && folder !== undefined) {
         expect(after.title).assertEqual('远端版本');
-        expect(after.folderPath).assertEqual('收藏/稍后读');
+        expect(after.folderId).assertEqual(folder.id);
         expect(after.source).assertEqual(BookmarkSource.IMPORT);
       }
     });

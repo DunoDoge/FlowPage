@@ -51,6 +51,14 @@
     {
       "name": "highlight",
       "value": "#3D3726"
+    },
+    {
+      "name": "row_selected",
+      "value": "#292923"
+    },
+    {
+      "name": "row_drop",
+      "value": "#243029"
     }
   ]
 }

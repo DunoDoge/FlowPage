@@ -19,7 +19,7 @@ export class Bookmark {
   @Trace snapshotAt: number = 0;
   @Trace searchText: string = '';
   @Trace source: number = BookmarkSource.MANUAL;
-  @Trace folderPath: string = '';
+  @Trace folderId: string = '';
   @Trace readState: number = ReadState.UNREAD;
   @Trace starred: boolean = false;
   @Trace archived: boolean = false;

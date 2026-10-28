@@ -6,6 +6,7 @@ import { MetadataService } from '../core/service/MetadataService';
 import { ArticleDocument } from '../model/Article';
 import { MetadataApplyResult } from '../model/MetadataResult';
 import { Bookmark } from '../model/Bookmark';
+import { FolderNode } from '../model/Folder';
 import { AppState } from '../common/AppState';
 import { ReadState, SnapshotStatus } from '../common/Constants';
 import { formatFullDate } from '../common/DateUtil';
@@ -14,6 +15,7 @@ import { domainOf } from '../common/UrlUtil';
 import { FlowRepository } from '../repository/FlowRepository';
 import { ReadingMode, ReadingSeed } from '../model/ReadingEntry';
 import { ReaderView } from './ReaderView';
+import { FolderPicker } from './FolderPicker';
 
 @ComponentV2
 export struct DetailContent {
@@ -21,6 +23,9 @@ export struct DetailContent {
   @Param showBack: boolean = false;
   @Param compact: boolean = false;
   @Event onBack: () => void = () => {};
+  // ESC fallback when there is no back button (wide shell): let the host page
+  // decide where to return (e.g. the folders pane the detail came from).
+  @Event onEscape: () => void = () => {};
   @Event onRemoved: () => void = () => {};
 
   @Local appState: AppState = AppState.shared;
@@ -34,6 +39,9 @@ export struct DetailContent {
   @Local draftNote: string = '';
   @Local draftExcerpt: string = '';
   @Local draftTags: string = '';
+  @Local draftFolderId: string = '';
+  @Local draftFolderPath: string = '';
+  @Local folderLabel: string = '';
   @Local busy: boolean = false;
   @Local linkStatus: number = 0;
   @Local checking: boolean = false;
@@ -83,6 +91,34 @@ export struct DetailContent {
     }
   }
 
+  private static findNodePath(nodes: FolderNode[], id: string): string {
+    for (let i = 0; i < nodes.length; i++) {
+      if (nodes[i].folder.id === id) {
+        return nodes[i].path;
+      }
+      const nested = DetailContent.findNodePath(nodes[i].children, id);
+      if (nested.length > 0) {
+        return nested;
+      }
+    }
+    return '';
+  }
+
+  private async loadFolderContext(): Promise<void> {
+    try {
+      const tree = await FlowRepository.get().folderTree();
+      this.folderLabel = this.bookmark.folderId.length > 0
+        ? DetailContent.findNodePath(tree, this.bookmark.folderId)
+        : '';
+      this.draftFolderPath = this.draftFolderId.length > 0
+        ? DetailContent.findNodePath(tree, this.draftFolderId)
+        : '';
+    } catch (error) {
+      this.folderLabel = '';
+      this.draftFolderPath = '';
+    }
+  }
+
   private clearReadingTimer(): void {
     if (this.readTimer >= 0) {
       clearTimeout(this.readTimer);
@@ -121,6 +157,8 @@ export struct DetailContent {
     this.draftNote = found.note;
     this.draftExcerpt = found.excerpt;
     this.draftTags = found.tags.join(', ');
+    this.draftFolderId = found.folderId;
+    this.loadFolderContext().catch((): void => {});
     if (found.readState === ReadState.UNREAD && !found.deleted) {
       found.readState = ReadState.READING;
       try {
@@ -480,6 +518,9 @@ export struct DetailContent {
         this.draftExcerpt,
         this.draftTagList()
       );
+      if (this.draftFolderId !== this.bookmark.folderId) {
+        await FlowRepository.get().setBookmarkFolder(this.bookmark.id, this.draftFolderId);
+      }
       await this.load();
       this.editing = false;
       AppState.shared.toast('已保存');
@@ -509,8 +550,12 @@ export struct DetailContent {
     .height('100%')
     .backgroundColor($r('app.color.paper'))
     .onKeyEvent((event: KeyEvent) => {
-      if (event.type === KeyType.Down && event.keyCode === KeyCode.KEYCODE_ESCAPE && this.showBack) {
-        this.onBack();
+      if (event.type === KeyType.Down && event.keyCode === KeyCode.KEYCODE_ESCAPE) {
+        if (this.showBack) {
+          this.onBack();
+        } else {
+          this.onEscape();
+        }
       }
     })
   }
@@ -569,6 +614,8 @@ export struct DetailContent {
                       this.draftNote = this.bookmark.note;
                       this.draftExcerpt = this.bookmark.excerpt;
                       this.draftTags = this.bookmark.tags.join(', ');
+                      this.draftFolderId = this.bookmark.folderId;
+                      this.draftFolderPath = this.folderLabel;
                     }
                   })
               }
@@ -623,6 +670,23 @@ export struct DetailContent {
           .fontColor($r('app.color.ink_secondary'))
       }
       .margin({ top: 10 })
+
+      if (this.folderLabel.length > 0) {
+        Row({ space: 6 }) {
+          Text(`文件夹：${this.folderLabel}`)
+            .fontSize(11)
+            .fontColor($r('app.color.ink_secondary'))
+            .padding({ left: 7, right: 7, top: 3, bottom: 3 })
+            .border({ width: 1, color: $r('app.color.line_strong') })
+            .borderRadius(2)
+            .margin({ top: 10 })
+            .accessibilityText(`筛选文件夹${this.folderLabel}`)
+            .onClick(() => {
+              this.appState.folderFilter = this.bookmark.folderId;
+            })
+        }
+        .width('100%')
+      }
 
       if (this.bookmark.tags.length > 0) {
         Flex({ wrap: FlexWrap.Wrap }) {
@@ -821,6 +885,27 @@ export struct DetailContent {
         .onChange((value: string) => {
           this.draftTags = value;
         })
+
+      Text('文件夹')
+        .fontSize(12)
+        .fontColor($r('app.color.ink_tertiary'))
+      Text(this.draftFolderPath.length > 0 ? this.draftFolderPath : '不放入文件夹')
+        .fontSize(13)
+        .fontColor(this.draftFolderPath.length > 0 ? $r('app.color.ink') : $r('app.color.ink_tertiary'))
+        .width('100%')
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .accessibilityText('所属文件夹')
+      FolderPicker({
+        selectedId: this.draftFolderId,
+        rootLabel: '不放入文件夹',
+        onPick: (folderId: string, label: string): void => {
+          this.draftFolderId = folderId;
+          this.draftFolderPath = folderId.length > 0 ? label : '';
+        }
+      })
+        .width('100%')
+        .margin({ top: 8 })
 
       Text('摘录')
         .fontSize(12)

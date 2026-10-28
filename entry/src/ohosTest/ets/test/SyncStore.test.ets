@@ -79,19 +79,24 @@ export default function syncStoreTest() {
     });
 
     it('syncRecordCarriesFolderAndSource', 0, () => {
-      const bookmark = Bookmark.create('https://example.com/record-schema2', '记录', BookmarkSource.MANUAL);
-      bookmark.folderPath = '工作/工具';
+      const bookmark = Bookmark.create('https://example.com/record-schema3', '记录', BookmarkSource.MANUAL);
+      bookmark.folderId = 'folder-42';
       bookmark.source = BookmarkSource.SHARE;
       const record = SyncRecord.fromBookmark(bookmark);
-      expect(record.schema).assertEqual(2);
+      expect(record.schema).assertEqual(3);
       const parsed = SyncRecord.parse(record.toJson());
-      expect(parsed.schema).assertEqual(2);
-      expect(parsed.folderPath).assertEqual('工作/工具');
+      expect(parsed.schema).assertEqual(3);
+      expect(parsed.folderId).assertEqual('folder-42');
       expect(parsed.source).assertEqual(BookmarkSource.SHARE);
-      const legacy = SyncRecord.parse('{"schema":1,"id":"legacy","url":"https://example.com/legacy"}');
-      expect(legacy.schema).assertEqual(1);
-      expect(legacy.folderPath).assertEqual('');
-      expect(legacy.source).assertEqual(BookmarkSource.MANUAL);
+      const legacy1 = SyncRecord.parse('{"schema":1,"id":"legacy1","url":"https://example.com/legacy1"}');
+      expect(legacy1.schema).assertEqual(1);
+      expect(legacy1.folderId).assertEqual('');
+      expect(legacy1.source).assertEqual(BookmarkSource.MANUAL);
+      const legacy2 = SyncRecord.parse(
+        '{"schema":2,"id":"legacy2","url":"https://example.com/legacy2","folderPath":"工作/工具"}'
+      );
+      expect(legacy2.schema).assertEqual(2);
+      expect(legacy2.folderId).assertEqual('');
     });
 
     it('appliesSchemaToLegacyBookmarkTable', 0, async () => {
@@ -131,7 +136,7 @@ export default function syncStoreTest() {
       await Database.applySchema(legacy);
       await Database.applySchema(legacy);
       const resultSet = await legacy.querySql(
-        'SELECT domain, dirty, link_status, link_checked_at, folder_path, source FROM bookmark WHERE id = ?',
+        'SELECT domain, dirty, link_status, link_checked_at, folder_id, source FROM bookmark WHERE id = ?',
         ['legacy']
       );
       expect(resultSet.goToFirstRow()).assertTrue();
@@ -139,9 +144,19 @@ export default function syncStoreTest() {
       expect(resultSet.getLong(resultSet.getColumnIndex('dirty'))).assertEqual(1);
       expect(resultSet.getLong(resultSet.getColumnIndex('link_status'))).assertEqual(0);
       expect(resultSet.getLong(resultSet.getColumnIndex('link_checked_at'))).assertEqual(0);
-      expect(resultSet.getString(resultSet.getColumnIndex('folder_path'))).assertEqual('');
+      expect(resultSet.getString(resultSet.getColumnIndex('folder_id'))).assertEqual('');
       expect(resultSet.getLong(resultSet.getColumnIndex('source'))).assertEqual(0);
       resultSet.close();
+      // folder_path either got dropped (modern SQLite) or remains inert; both are safe,
+      // and applySchema above must not have thrown either way.
+      try {
+        const legacyColumn = await legacy.querySql('SELECT folder_path FROM bookmark WHERE id = ?', ['legacy']);
+        legacyColumn.close();
+      } catch (error) {
+      }
+      const folderTable = await legacy.querySql('SELECT COUNT(*) AS cnt FROM folder', []);
+      expect(folderTable.goToFirstRow()).assertTrue();
+      folderTable.close();
       await relationalStore.deleteRdbStore(context, legacyName);
     });
 

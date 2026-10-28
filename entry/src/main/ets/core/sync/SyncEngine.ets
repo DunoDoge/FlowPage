@@ -1,11 +1,13 @@
 import { common } from '@kit.AbilityKit';
 import { Bookmark } from '../../model/Bookmark';
+import { Folder } from '../../model/Folder';
 import { Tombstone } from '../../model/Tombstone';
 import { FlowRepository } from '../../repository/FlowRepository';
 import { SyncConfigStore } from './SyncConfigStore';
 import { SyncErrorText } from './SyncErrorText';
 import { SyncAction, SyncPlanner } from './SyncPlanner';
 import { SyncRecord } from './SyncRecord';
+import { FolderSyncRecord } from './FolderSyncRecord';
 import { SyncTransport } from './SyncTransport';
 import { RemoteItem } from './WebDavTypes';
 import { WebDavTransport } from './WebDavTransport';
@@ -20,6 +22,65 @@ export class SyncReport {
   message: string = '';
 }
 
+// Minimal per-entity view the generic loop needs; both Bookmark and Folder map onto it.
+class SyncEntityRow {
+  id: string = '';
+  rev: number = 1;
+  updatedAt: number = 0;
+  dirty: boolean = true;
+  remoteEtag: string = '';
+}
+
+// One entity type (bookmarks or folders) injected as closures over transport + repository.
+class EntityHooks {
+  fetchRemote: () => Promise<RemoteItem[]> = (): Promise<RemoteItem[]> => {
+    return Promise.resolve([]);
+  };
+  fetchLocal: () => Promise<SyncEntityRow[]> = (): Promise<SyncEntityRow[]> => {
+    return Promise.resolve([]);
+  };
+  fetchBody: (name: string) => Promise<string> = (name: string): Promise<string> => {
+    throw new Error('NOT WIRED');
+  };
+  updatedAtOf: (body: string) => number = (body: string): number => {
+    return 0;
+  };
+  applyRemote: (body: string, etag: string) => Promise<boolean> = (body: string, etag: string): Promise<boolean> => {
+    return Promise.resolve(false);
+  };
+  serialize: (id: string) => Promise<string | undefined> = (id: string): Promise<string | undefined> => {
+    return Promise.resolve(undefined);
+  };
+  put: (name: string, json: string, etag: string) => Promise<string> =
+    (name: string, json: string, etag: string): Promise<string> => {
+      return Promise.resolve('');
+    };
+  adoptEtag: (row: SyncEntityRow, etag: string) => Promise<boolean> =
+    (row: SyncEntityRow, etag: string): Promise<boolean> => {
+      return Promise.resolve(false);
+    };
+}
+
+function bookmarkRow(bookmark: Bookmark): SyncEntityRow {
+  const row = new SyncEntityRow();
+  row.id = bookmark.id;
+  row.rev = bookmark.rev;
+  row.updatedAt = bookmark.updatedAt;
+  row.dirty = bookmark.dirty;
+  row.remoteEtag = bookmark.remoteEtag;
+  return row;
+}
+
+function folderRow(folder: Folder): SyncEntityRow {
+  const row = new SyncEntityRow();
+  row.id = folder.id;
+  row.rev = folder.rev;
+  row.updatedAt = folder.updatedAt;
+  row.dirty = folder.dirty;
+  row.remoteEtag = folder.remoteEtag;
+  return row;
+}
+
 export class SyncEngine {
   private static running: boolean = false;
 
@@ -30,19 +91,21 @@ export class SyncEngine {
     }
   }
 
-  private static async upload(
-    transport: SyncTransport,
-    repo: FlowRepository,
-    bookmark: Bookmark,
+  private static async uploadOne(
+    hooks: EntityHooks,
+    row: SyncEntityRow,
     remoteEtag: string,
     report: SyncReport
   ): Promise<void> {
-    const expectedRev = bookmark.rev;
-    const expectedUpdatedAt = bookmark.updatedAt;
+    const expectedRev = row.rev;
+    const expectedUpdatedAt = row.updatedAt;
     try {
-      const json = SyncRecord.fromBookmark(bookmark).toJson();
-      const etag = await transport.put(bookmark.id, json, remoteEtag);
-      const applied = await repo.setRemoteEtagIfUnchanged(bookmark.id, etag, expectedRev, expectedUpdatedAt);
+      const json = await hooks.serialize(row.id);
+      if (json === undefined) {
+        return;
+      }
+      const etag = await hooks.put(row.id, json, remoteEtag);
+      const applied = await hooks.adoptEtag(row, etag);
       if (applied) {
         report.uploaded = report.uploaded + 1;
       } else {
@@ -50,6 +113,103 @@ export class SyncEngine {
       }
     } catch (error) {
       SyncEngine.fail(report, error);
+    }
+  }
+
+  // The same three-phase per-entity loop bookmarks always ran, now shared with folders:
+  // remote items plan -> upload/download -> local-only upload. Tombstone sets gate revives.
+  private static async syncCollection(
+    hooks: EntityHooks,
+    remoteTombstoneSet: Set<string>,
+    localTombstoneSet: Set<string>,
+    report: SyncReport
+  ): Promise<void> {
+    const remoteItems = await hooks.fetchRemote();
+    const remoteMap = new Map<string, RemoteItem>();
+    for (let i = 0; i < remoteItems.length; i++) {
+      remoteMap.set(remoteItems[i].name, remoteItems[i]);
+    }
+    const localRows = await hooks.fetchLocal();
+    const localMap = new Map<string, SyncEntityRow>();
+    for (let i = 0; i < localRows.length; i++) {
+      localMap.set(localRows[i].id, localRows[i]);
+    }
+
+    for (let i = 0; i < remoteItems.length; i++) {
+      const remote = remoteItems[i];
+      if (remote.name.length === 0) {
+        continue;
+      }
+      if (remoteTombstoneSet.has(remote.name) || localTombstoneSet.has(remote.name)) {
+        continue;
+      }
+      const local = localMap.get(remote.name);
+
+      if (local === undefined) {
+        try {
+          const body = await hooks.fetchBody(remote.name);
+          const applied = await hooks.applyRemote(body, remote.etag);
+          if (applied) {
+            report.downloaded = report.downloaded + 1;
+          } else {
+            report.skipped = report.skipped + 1;
+          }
+        } catch (error) {
+          SyncEngine.fail(report, error);
+        }
+        continue;
+      }
+
+      const action = SyncPlanner.planForExisting(local.dirty, local.remoteEtag, remote.etag);
+      if (action === SyncAction.UPLOAD) {
+        await SyncEngine.uploadOne(hooks, local, remote.etag, report);
+        continue;
+      }
+      if (action === SyncAction.SKIP) {
+        report.skipped = report.skipped + 1;
+        continue;
+      }
+
+      try {
+        const body = await hooks.fetchBody(remote.name);
+        const next = SyncPlanner.planAfterFetch(
+          local.dirty,
+          local.remoteEtag,
+          local.updatedAt,
+          hooks.updatedAtOf(body)
+        );
+        if (next === SyncAction.DOWNLOAD) {
+          const applied = await hooks.applyRemote(body, remote.etag);
+          if (applied) {
+            report.downloaded = report.downloaded + 1;
+          } else {
+            report.skipped = report.skipped + 1;
+          }
+        } else if (next === SyncAction.ADOPT_ETAG) {
+          const applied = await hooks.adoptEtag(local, remote.etag);
+          if (applied) {
+            report.skipped = report.skipped + 1;
+          } else {
+            await SyncEngine.uploadOne(hooks, local, remote.etag, report);
+          }
+        } else {
+          await SyncEngine.uploadOne(hooks, local, remote.etag, report);
+        }
+      } catch (error) {
+        SyncEngine.fail(report, error);
+      }
+    }
+
+    for (let i = 0; i < localRows.length; i++) {
+      const row = localRows[i];
+      // remoteTombstoneSet: a remote tombstone outranks any stale local row snapshot.
+      if (remoteMap.has(row.id) || localTombstoneSet.has(row.id) || remoteTombstoneSet.has(row.id)) {
+        continue;
+      }
+      if (SyncPlanner.planForLocalOnly(row.dirty, false) === SyncAction.SKIP) {
+        continue;
+      }
+      await SyncEngine.uploadOne(hooks, row, '', report);
     }
   }
 
@@ -78,6 +238,7 @@ export class SyncEngine {
     await transport.test();
     await transport.ensureBase();
     const remoteItems = await transport.listItems();
+    const remoteFolders = await transport.listFolders();
     const remoteTombstoneIds = await transport.listTombstones();
     const remoteTombstoneSet = new Set<string>();
     for (let i = 0; i < remoteTombstoneIds.length; i++) {
@@ -87,12 +248,21 @@ export class SyncEngine {
     for (let i = 0; i < remoteItems.length; i++) {
       remoteMap.set(remoteItems[i].name, remoteItems[i]);
     }
+    const remoteFolderMap = new Map<string, RemoteItem>();
+    for (let i = 0; i < remoteFolders.length; i++) {
+      remoteFolderMap.set(remoteFolders[i].name, remoteFolders[i]);
+    }
 
     const repo = FlowRepository.get();
     const localAll = await repo.listAll(true);
     const localMap = new Map<string, Bookmark>();
     for (let i = 0; i < localAll.length; i++) {
       localMap.set(localAll[i].id, localAll[i]);
+    }
+    const localFolders = await repo.listAllFolders();
+    const localFolderMap = new Map<string, Folder>();
+    for (let i = 0; i < localFolders.length; i++) {
+      localFolderMap.set(localFolders[i].id, localFolders[i]);
     }
     const tombstones = await repo.listTombstones();
     const tombstoneMap = new Map<string, Tombstone>();
@@ -103,16 +273,17 @@ export class SyncEngine {
       localTombstoneSet.add(tombstones[i].remoteName());
       localTombstoneSet.add(tombstones[i].id);
     }
-    const handled = new Set<string>();
 
+    // Tombstone reconciliation covers both entity types; uuids cannot collide.
     for (let i = 0; i < remoteTombstoneIds.length; i++) {
       const id = remoteTombstoneIds[i];
       if (id.length === 0) {
         continue;
       }
-      handled.add(id);
       if (localMap.get(id) !== undefined) {
         await repo.purgeFromRemote(id);
+      } else if (localFolderMap.get(id) !== undefined) {
+        await repo.purgeFolderFromRemote(id);
       } else if (tombstoneMap.get(id) !== undefined) {
         await repo.removeTombstone(id);
       }
@@ -124,100 +295,93 @@ export class SyncEngine {
           SyncEngine.fail(report, error);
         }
       }
-    }
-
-    for (let i = 0; i < remoteItems.length; i++) {
-      const remote = remoteItems[i];
-      if (remote.name.length === 0) {
-        continue;
-      }
-      handled.add(remote.name);
-      if (remoteTombstoneSet.has(remote.name) || localTombstoneSet.has(remote.name)) {
-        continue;
-      }
-      const local = localMap.get(remote.name);
-
-      if (local === undefined) {
+      if (remoteFolderMap.get(id) !== undefined) {
         try {
-          const response = await transport.get(remote.name);
-          if (response.status === 200) {
-            const record = SyncRecord.parse(response.body);
-            const applied = await repo.upsertFromRemote(record, remote.etag);
-            if (applied) {
-              report.downloaded = report.downloaded + 1;
-            } else {
-              report.skipped = report.skipped + 1;
-            }
-          } else {
-            SyncEngine.fail(report, new Error(`GET_${response.status}`));
-          }
+          await transport.removeFolder(id);
+          report.deleted = report.deleted + 1;
         } catch (error) {
           SyncEngine.fail(report, error);
         }
-        continue;
-      }
-
-      const action = SyncPlanner.planForExisting(local.dirty, local.remoteEtag, remote.etag);
-      if (action === SyncAction.UPLOAD) {
-        await SyncEngine.upload(transport, repo, local, remote.etag, report);
-        continue;
-      }
-      if (action === SyncAction.SKIP) {
-        report.skipped = report.skipped + 1;
-        continue;
-      }
-
-      try {
-        const response = await transport.get(remote.name);
-        if (response.status !== 200) {
-          SyncEngine.fail(report, new Error(`GET_${response.status}`));
-          continue;
-        }
-        const record = SyncRecord.parse(response.body);
-        const next = SyncPlanner.planAfterFetch(
-          local.dirty,
-          local.remoteEtag,
-          local.updatedAt,
-          record.updatedAt
-        );
-        if (next === SyncAction.DOWNLOAD) {
-          const applied = await repo.upsertFromRemote(record, remote.etag);
-          if (applied) {
-            report.downloaded = report.downloaded + 1;
-          } else {
-            report.skipped = report.skipped + 1;
-          }
-        } else if (next === SyncAction.ADOPT_ETAG) {
-          const applied = await repo.setRemoteEtagIfUnchanged(
-            local.id,
-            remote.etag,
-            local.rev,
-            local.updatedAt
-          );
-          if (applied) {
-            report.skipped = report.skipped + 1;
-          } else {
-            await SyncEngine.upload(transport, repo, local, remote.etag, report);
-          }
-        } else {
-          await SyncEngine.upload(transport, repo, local, remote.etag, report);
-        }
-      } catch (error) {
-        SyncEngine.fail(report, error);
       }
     }
 
-    for (let i = 0; i < localAll.length; i++) {
-      const local = localAll[i];
-      if (handled.has(local.id) || localTombstoneSet.has(local.id)) {
-        continue;
+    const bookmarkHooks = new EntityHooks();
+    bookmarkHooks.fetchRemote = (): Promise<RemoteItem[]> => {
+      return Promise.resolve(remoteItems);
+    };
+    bookmarkHooks.fetchLocal = (): Promise<SyncEntityRow[]> => {
+      const rows: SyncEntityRow[] = [];
+      for (let i = 0; i < localAll.length; i++) {
+        rows.push(bookmarkRow(localAll[i]));
       }
-      const known = remoteMap.get(local.id);
-      if (SyncPlanner.planForLocalOnly(local.dirty, known !== undefined) === SyncAction.SKIP) {
-        continue;
+      return Promise.resolve(rows);
+    };
+    bookmarkHooks.fetchBody = async (name: string): Promise<string> => {
+      const response = await transport.get(name);
+      if (response.status !== 200) {
+        throw new Error(`GET_${response.status}`);
       }
-      await SyncEngine.upload(transport, repo, local, known === undefined ? '' : known.etag, report);
-    }
+      return response.body;
+    };
+    bookmarkHooks.updatedAtOf = (body: string): number => {
+      return SyncRecord.parse(body).updatedAt;
+    };
+    bookmarkHooks.applyRemote = async (body: string, etag: string): Promise<boolean> => {
+      return repo.upsertFromRemote(SyncRecord.parse(body), etag);
+    };
+    bookmarkHooks.serialize = async (id: string): Promise<string | undefined> => {
+      const bookmark = await repo.get(id);
+      if (bookmark === undefined) {
+        return undefined;
+      }
+      return SyncRecord.fromBookmark(bookmark).toJson();
+    };
+    bookmarkHooks.put = (name: string, json: string, etag: string): Promise<string> => {
+      return transport.put(name, json, etag);
+    };
+    bookmarkHooks.adoptEtag = (row: SyncEntityRow, etag: string): Promise<boolean> => {
+      return repo.setRemoteEtagIfUnchanged(row.id, etag, row.rev, row.updatedAt);
+    };
+    await SyncEngine.syncCollection(bookmarkHooks, remoteTombstoneSet, localTombstoneSet, report);
+
+    const folderHooks = new EntityHooks();
+    folderHooks.fetchRemote = (): Promise<RemoteItem[]> => {
+      return Promise.resolve(remoteFolders);
+    };
+    folderHooks.fetchLocal = (): Promise<SyncEntityRow[]> => {
+      const rows: SyncEntityRow[] = [];
+      for (let i = 0; i < localFolders.length; i++) {
+        rows.push(folderRow(localFolders[i]));
+      }
+      return Promise.resolve(rows);
+    };
+    folderHooks.fetchBody = async (name: string): Promise<string> => {
+      const response = await transport.getFolder(name);
+      if (response.status !== 200) {
+        throw new Error(`GET_${response.status}`);
+      }
+      return response.body;
+    };
+    folderHooks.updatedAtOf = (body: string): number => {
+      return FolderSyncRecord.parse(body).updatedAt;
+    };
+    folderHooks.applyRemote = async (body: string, etag: string): Promise<boolean> => {
+      return repo.upsertFolderFromRemote(FolderSyncRecord.parse(body), etag);
+    };
+    folderHooks.serialize = async (id: string): Promise<string | undefined> => {
+      const folder = await repo.getFolder(id);
+      if (folder === undefined) {
+        return undefined;
+      }
+      return FolderSyncRecord.fromFolder(folder).toJson();
+    };
+    folderHooks.put = (name: string, json: string, etag: string): Promise<string> => {
+      return transport.putFolder(name, json, etag);
+    };
+    folderHooks.adoptEtag = (row: SyncEntityRow, etag: string): Promise<boolean> => {
+      return repo.setFolderEtagIfUnchanged(row.id, etag, row.rev, row.updatedAt);
+    };
+    await SyncEngine.syncCollection(folderHooks, remoteTombstoneSet, localTombstoneSet, report);
 
     for (let i = 0; i < tombstones.length; i++) {
       const tombstone = tombstones[i];
@@ -235,6 +399,16 @@ export class SyncEngine {
       if (remoteMap.get(id) !== undefined) {
         try {
           await transport.remove(id);
+          report.deleted = report.deleted + 1;
+        } catch (error) {
+          await repo.markTombstoneFailed(tombstone.id, SyncErrorText.describeError(error));
+          SyncEngine.fail(report, error);
+          continue;
+        }
+      }
+      if (remoteFolderMap.get(id) !== undefined) {
+        try {
+          await transport.removeFolder(id);
           report.deleted = report.deleted + 1;
         } catch (error) {
           await repo.markTombstoneFailed(tombstone.id, SyncErrorText.describeError(error));

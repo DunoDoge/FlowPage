@@ -3,12 +3,14 @@ import { preferences } from '@kit.ArkData';
 import { mediaquery } from '@kit.ArkUI';
 import { AppState } from '../common/AppState';
 import { Pane } from '../common/Constants';
+import { FolderDragSession } from '../common/FolderDragSession';
 import { Bookmark } from '../model/Bookmark';
 import { FlowRepository } from '../repository/FlowRepository';
 import { StreamHome } from '../components/StreamHome';
+import { FolderPanel } from '../components/FolderPanel';
 import { DetailContent } from '../components/DetailContent';
 import { InboxSheet } from '../components/InboxSheet';
-import { SideNav } from '../components/NavigationRail';
+import { SideNav, NAV_ITEMS, NavItem } from '../components/NavigationRail';
 import { TagsPage } from './TagsPage';
 import { SyncPage } from './SyncPage';
 import { SettingsPage } from './SettingsPage';
@@ -18,6 +20,7 @@ import { ReadingShell } from '../components/ReadingShell';
 @ComponentV2
 struct Index {
   @Local appState: AppState = AppState.shared;
+  @Local dragSession: FolderDragSession = FolderDragSession.shared;
   @Local isWide: boolean = false;
   @Local isLarge: boolean = false;
   @Local navStack: NavPathStack = new NavPathStack();
@@ -44,6 +47,14 @@ struct Index {
   aboutToDisappear(): void {
     this.mdListener.off('change', this.onMediumChange);
     this.lgListener.off('change', this.onLargeChange);
+  }
+
+  onBackPress(): boolean {
+    if (this.appState.folderDrawerOpen) {
+      this.appState.folderDrawerOpen = false;
+      return true;
+    }
+    return false;
   }
 
   @Monitor('appState.routeTick')
@@ -146,6 +157,10 @@ struct Index {
         this.PhoneShell()
       }
 
+      if (!this.isLarge && this.appState.folderDrawerOpen) {
+        this.FolderDrawer()
+      }
+
       if (this.appState.showInbox) {
         InboxSheet()
       }
@@ -189,6 +204,73 @@ struct Index {
   }
 
   @Builder
+  FolderDrawer() {
+    Row() {
+      Column() {
+        // Same nav set as the docked rail; label text keeps the home ☰ inset
+        // (20vp) so the drawer visually continues from the button.
+        ForEach(NAV_ITEMS, (item: NavItem) => {
+          Row() {
+            if (this.appState.pane === item.pane) {
+              Row()
+                .width(2)
+                .height(20)
+                .backgroundColor($r('app.color.ink'))
+                .borderRadius(1)
+            }
+            Text(item.label)
+              .fontSize(14)
+              .fontColor(this.appState.pane === item.pane ? $r('app.color.ink') : $r('app.color.ink_secondary'))
+              .fontWeight(this.appState.pane === item.pane ? FontWeight.Medium : FontWeight.Normal)
+              .margin({ left: 20 })
+          }
+          .width('100%')
+          .height(44)
+          .alignItems(VerticalAlign.Center)
+          .accessibilityText(`打开${item.label}`)
+          .focusable(true)
+          .onClick(() => {
+            this.appState.folderDrawerOpen = false;
+            this.openPane(item.pane);
+          })
+        }, (item: NavItem) => item.pane)
+
+        Divider()
+          .strokeWidth(1)
+          .color($r('app.color.line'))
+          .margin({ top: 4, bottom: 4 })
+
+        Column() {
+          FolderPanel({
+            isWide: false,
+            docked: false
+          })
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .clip(false)
+      }
+      .width('84%')
+      .constraintSize({ maxWidth: 320 })
+      .height('100%')
+      .backgroundColor($r('app.color.paper'))
+      .border({ width: { right: 1 }, color: $r('app.color.line') })
+      .clip(false)
+
+      Row()
+        .layoutWeight(1)
+        .height('100%')
+        .backgroundColor($r('app.color.overlay'))
+        .hitTestBehavior(this.dragSession.active ? HitTestMode.None : HitTestMode.Default)
+        .onClick(() => {
+          this.appState.folderDrawerOpen = false;
+        })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
   WideShell() {
     Row() {
       if (this.isLarge) {
@@ -199,13 +281,14 @@ struct Index {
             }
           })
         }
-        .width(240)
+        .width(280)
         .height('100%')
       }
 
       Column() {
         StreamHome({
           isWide: true,
+          folderDocked: this.isLarge,
           refreshKey: this.streamRefresh,
           onOpen: (id: string) => this.openDetail(id),
           onCompose: () => this.appState.openInbox(''),
@@ -243,6 +326,7 @@ struct Index {
     Navigation(this.navStack) {
       StreamHome({
         isWide: false,
+        folderDocked: false,
         refreshKey: this.streamRefresh,
         onOpen: (id: string) => this.openDetail(id),
         onCompose: () => this.appState.openInbox(''),

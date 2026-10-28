@@ -116,7 +116,7 @@
 | R16 | 标签计数含回收站 | `BookmarkDao.ets:451-455` 未过滤 `bookmark.deleted = 0` | 标签数字与筛选结果不一致 |
 | R17 | 汇总口径不一致 | `FlowRepository.ets:217-237` 的 unread/starred 包含归档，首页筛选排除归档 | 设置/同步页数字与列表不一致 |
 | R18 | 站点图标未展示 | `MetadataService.ets:184-189` 抓取 favicon/cover，UI 无 `Image` 消费 | PRD「自动站点图标」未落地 |
-| R19 | 死代码与文档漂移 | `sync_state`、`deviceId`、`searchLimit`、`countConflicts`、`SnapshotStatus.OFF` 未使用；`docs/records/01-implementation-log.md` 写 28 个用例（实际 30）、仍提 `BrowserPage`；`docs/engineering/02-implementation-plan.md` 仍把 `devecocli build` 当门禁 | 后续维护者被误导 |
+| R19 | 死代码与文档漂移 | `sync_state`、`deviceId`、`searchLimit`、`countConflicts`、`SnapshotStatus.OFF` 未使用；`docs/records/01-implementation-log.md` 写 28 个用例（实际 30）、仍提 `BrowserPage`；`docs/records/06-implementation-plan.md` 仍把 `devecocli build` 当门禁 | 后续维护者被误导 |
 | R20 | `as` 断言与项目规范冲突 | 14 处 `as`，多为 `getContext`/`JSON.parse` 平台断言 | 与 `AGENTS.md`「禁止 as」不一致，需修代码或改规范 |
 
 ---
@@ -165,7 +165,7 @@
 
 ## 6. 第二批：验收补齐
 
-目标：把 PRD / `docs/engineering/02-implementation-plan.md` 验收中“已承诺但不可验收”的条目补齐。**建议 3–5 天。**
+目标：把 PRD / `docs/records/06-implementation-plan.md` 验收中“已承诺但不可验收”的条目补齐。**建议 3–5 天。**
 
 > 2026-10-21 完成：T2.1–T2.6 全部落地；卡片与键盘仍需人工走查，见 §10。
 
@@ -185,7 +185,7 @@
 - [x] **T2.3 搜索、排序与列表性能**
   - 增加排序入口（创建时间 / 域名）；搜索命中高亮。
   - 列表查询改为 SQL 过滤/分页，避免每次全表加载；卡片快照按需刷新。
-  - 验收：1000 条滚动 60fps；10k 条搜索 ≤100ms（按 `docs/engineering/02-implementation-plan.md` 口径）。
+  - 验收：1000 条滚动 60fps；10k 条搜索 ≤100ms（按 `docs/records/06-implementation-plan.md` 口径）。
   - 测试：查询边界、分页、排序。
 
 - [x] **T2.4 阅读语义与快照体验**
@@ -240,7 +240,7 @@
 3. 完成 `docs/quality/01-walkthrough-checklist.md` 走查清单中手机、2in1、同步三部分。
 4. 每一笔 Repository 写操作都满足 `rev / updated_at / dirty` 语义。
 5. 不引入 `any` / `unknown`；`as` 使用需与 `AGENTS.md` 规则一致。
-6. 文档状态与代码一致：`docs/records/01-implementation-log.md` 用例数、`docs/engineering/02-implementation-plan.md` 构建命令、`README` 已知边界。
+6. 文档状态与代码一致：`docs/records/01-implementation-log.md` 用例数、`docs/records/06-implementation-plan.md` 构建命令、`README` 已知边界。
 7. 未经明确要求不 commit / push。
 
 ---
@@ -367,3 +367,22 @@ hdc shell aa test -b com.dunodoge.flowpage -m entry_test -s unittest OpenHarmony
 6. R20（存量 `as` 断言）未纳入本轮；收尾批次已从 18 处收敛到 5 处平台类型边界，见 docs/records/03-review-follow-up.md §6.5。
 7. R10（跨端 `folderPath/source`）：第三批完成最小修；收尾批次已升级 `SyncRecord` schema 2 并兼容 schema 1，Backlog 关闭。
 8. 5000 条导入在模拟器为 10.27s，12s 保险阈值内；低端真机仍需复测回填。
+
+## 11. 文件夹树收口评审（2026-10-28，add-folder-tree 归档前）
+
+子代理对完整工作区变更做质量与冗余评审；人工走查（round-trip、树面板、拖拽、详情往返）已全部通过。
+
+### 11.1 修复的缺陷（blocker）
+
+1. `FolderDao.buildFolderTree` 计数读取使用 `as number` 断言，违反 ArkTS 严格子集，改为局部变量判空。
+2. `FolderDao.move()` 未做目标父级同名检查：拖入 / FolderPicker 移入已含同名 live 子文件夹的目标时直接撞 `idx_folder_parent_name` 抛异常，且 `batchMove` 中途失败产生部分完成状态。现改为拒绝并按 skipped 计入（与「移入自身子孙被跳过」同语义）。
+3. `FlowRepository.upsertFolderFromRemote()` 远端落地（insert 与 update 两路径）无同名消解：双端各自创建同名同级文件夹时每次同步永久失败且无自愈。现经 `FolderDao.dedupedName()` 落地去重名（`开发 (2)` 序列，与 `restoreChain` 同款）。
+
+新增回归用例：`moveRejectsSiblingNameClashInTarget`、`remoteFolderLandingDedupesSameNameSibling`；设备端 185/185 通过，`codelinter` 0 error。
+
+### 11.2 遗留（后续变更处理，不阻塞归档）
+
+1. 文件夹软删除状态不随实体记录传播：墓碑要等过期清理才产生，窗口期内软删行仍按活态上传，且对端编辑可静默复活回收站中的文件夹。候选方案：`FolderSyncRecord` 增加 `deleted` 字段（对齐书签 LWW）或上传跳过 `deleted=1` 行 + 落地拒绝复活。
+2. `appState.homeFilter` 与 `StreamHome` 私有 `filter` 双份存储，断点切换时可能不一致，应收敛到 AppState 单份。
+3. 详情保存 `applyMetadata` 与 `setBookmarkFolder` 两阶段写、两次 notify，中途失败产生半保存态，可在 Repository 合并写入口。
+4. 冗余项：`FlowRepository.bookmarksInFolder()` 生产零调用（带 500 条截断，误用有丢数据隐患）；`ImportedBookmark.folderPath` 与 `segments` 冗余；`DetailContent.onEscape` 无调用方；`BookmarkHtmlParser` 3 处函数内 `new RegExp`（非热点，与存量风格一致）。

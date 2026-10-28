@@ -41,7 +41,7 @@ export class BookmarkDao {
       'snapshot_at': bookmark.snapshotAt,
       'search_text': bookmark.searchText,
       'source': bookmark.source,
-      'folder_path': bookmark.folderPath,
+      'folder_id': bookmark.folderId,
       'read_state': bookmark.readState,
       'starred': bookmark.starred ? 1 : 0,
       'archived': bookmark.archived ? 1 : 0,
@@ -76,7 +76,7 @@ export class BookmarkDao {
     bookmark.snapshotAt = rs.getLong(rs.getColumnIndex('snapshot_at'));
     bookmark.searchText = rs.getString(rs.getColumnIndex('search_text'));
     bookmark.source = rs.getLong(rs.getColumnIndex('source'));
-    bookmark.folderPath = rs.getString(rs.getColumnIndex('folder_path'));
+    bookmark.folderId = rs.getString(rs.getColumnIndex('folder_id'));
     bookmark.readState = rs.getLong(rs.getColumnIndex('read_state'));
     bookmark.starred = rs.getLong(rs.getColumnIndex('starred')) === 1;
     bookmark.archived = rs.getLong(rs.getColumnIndex('archived')) === 1;
@@ -284,6 +284,10 @@ export class BookmarkDao {
       );
       where.args.push(query.tag);
     }
+    if (query.folderId.length > 0) {
+      parts.push('folder_id = ?');
+      where.args.push(query.folderId);
+    }
     const keyword = query.keyword.trim().toLowerCase();
     if (keyword.length > 0) {
       parts.push('search_text LIKE ? ESCAPE \'\\\'');
@@ -296,7 +300,9 @@ export class BookmarkDao {
   async queryPage(query: BookmarkQuery, offset: number, limit: number): Promise<Bookmark[]> {
     const store = Database.getStore();
     const where = this.buildWhere(query);
-    const order = query.sort === 1 ? 'domain ASC, created_at DESC' : 'created_at DESC';
+    const order = query.sort === 1
+      ? 'domain ASC, created_at DESC'
+      : (query.sort === 2 ? 'created_at ASC' : 'created_at DESC');
     const args: relationalStore.ValueType[] = [];
     for (let i = 0; i < where.args.length; i++) {
       args.push(where.args[i]);
@@ -521,6 +527,14 @@ export class BookmarkDao {
     await store.executeSql(
       'UPDATE bookmark SET starred = ?, updated_at = ?, rev = rev + 1, dirty = 1 WHERE id = ?',
       [starred ? 1 : 0, Date.now(), id]
+    );
+  }
+
+  async setFolder(id: string, folderId: string): Promise<void> {
+    const store = Database.getStore();
+    await store.executeSql(
+      'UPDATE bookmark SET folder_id = ?, updated_at = ?, rev = rev + 1, dirty = 1 WHERE id = ?',
+      [folderId, Date.now(), id]
     );
   }
 
@@ -998,6 +1012,7 @@ export class BookmarkDao {
     try {
       await store.executeSql('DELETE FROM bookmark');
       await store.executeSql('DELETE FROM tag');
+      await store.executeSql('DELETE FROM folder');
       await store.executeSql('DELETE FROM bookmark_tag');
       await store.executeSql('DELETE FROM conflict');
       store.commit();

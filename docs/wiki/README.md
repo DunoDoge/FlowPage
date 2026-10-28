@@ -5,7 +5,7 @@ ArkTS + ArkUI 声明式 UI，状态管理 V2；本地 RDB 是唯一事实源，W
 正文快照保存在应用沙箱的普通文本文件中，不参与同步。
 
 本 Wiki 面向需要理解、维护或扩展仓库的开发者，按分层拆解职责、数据流与关键约束。
-产品与设计背景见 [../README.md](../README.md) 与 `docs/product/`、`docs/design/`、`docs/engineering/`。
+产品与设计背景见 [../README.md](../README.md) 与 `docs/product/`、`docs/design/`。
 
 > 说明：本文以**当前仓库代码**为准。`docs/records/01-implementation-log.md` 是历史批次记录，个别描述已过时
 >（如 28 个用例、已不存在的 `BrowserPage`），以源码与 [AGENTS.md](../../AGENTS.md) 为准。
@@ -30,7 +30,7 @@ ArkTS + ArkUI 声明式 UI，状态管理 V2；本地 RDB 是唯一事实源，W
 | UI | ArkTS + ArkUI，`@ComponentV2` / `@ObservedV2`；只有卡片用 V1 |
 | 数据 | RDB `flowpage.db`：bookmark / tag / bookmark_tag / conflict / sync_state / tombstone |
 | 同步 | WebDAV Basic Auth，`FlowPage/v1/` 布局，ETag + LWW + 墓碑 |
-| 测试 | Hypium 设备端 12 套件 / 130 用例 |
+| 测试 | Hypium 设备端，套件/用例数见 [AGENTS.md](../../AGENTS.md)（易变数字唯一维护点） |
 
 ## 功能与实现入口
 

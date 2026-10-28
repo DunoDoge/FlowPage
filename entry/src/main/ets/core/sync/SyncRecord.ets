@@ -3,7 +3,7 @@ import { BookmarkSource, SnapshotStatus } from '../../common/Constants';
 import { normalizeUrl } from '../../common/UrlUtil';
 
 export class SyncRecord {
-  schema: number = 2;
+  schema: number = 3;
   id: string = '';
   url: string = '';
   title: string = '';
@@ -14,7 +14,7 @@ export class SyncRecord {
   note: string = '';
   excerpt: string = '';
   tags: string[] = [];
-  folderPath: string = '';
+  folderId: string = '';
   source: number = BookmarkSource.MANUAL;
   createdAt: number = 0;
   updatedAt: number = 0;
@@ -40,7 +40,7 @@ export class SyncRecord {
     record.note = bookmark.note;
     record.excerpt = bookmark.excerpt;
     record.tags = bookmark.tags;
-    record.folderPath = bookmark.folderPath;
+    record.folderId = bookmark.folderId;
     record.source = bookmark.source;
     record.createdAt = bookmark.createdAt;
     record.updatedAt = bookmark.updatedAt;
@@ -70,7 +70,7 @@ export class SyncRecord {
     record.note = typeof raw.note === 'string' ? raw.note : '';
     record.excerpt = typeof raw.excerpt === 'string' ? raw.excerpt : '';
     record.tags = raw.tags !== undefined ? raw.tags : [];
-    record.folderPath = typeof raw.folderPath === 'string' ? raw.folderPath : '';
+    record.folderId = typeof raw.folderId === 'string' ? raw.folderId : '';
     record.source = typeof raw.source === 'number' ? raw.source : BookmarkSource.MANUAL;
     record.createdAt = typeof raw.createdAt === 'number' ? raw.createdAt : 0;
     record.updatedAt = typeof raw.updatedAt === 'number' ? raw.updatedAt : 0;
@@ -99,7 +99,7 @@ export class SyncRecord {
     bookmark.note = this.note;
     bookmark.excerpt = this.excerpt;
     bookmark.tags = this.tags;
-    bookmark.folderPath = this.folderPath;
+    bookmark.folderId = this.folderId;
     bookmark.source = this.source;
     bookmark.createdAt = this.createdAt;
     bookmark.updatedAt = this.updatedAt;

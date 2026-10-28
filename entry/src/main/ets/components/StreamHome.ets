@@ -1,11 +1,14 @@
 import { pasteboard } from '@kit.BasicServicesKit';
+import { KeyCode } from '@kit.InputKit';
 import { Bookmark } from '../model/Bookmark';
 import { BookmarkQuery, BookmarkSort } from '../model/BookmarkQuery';
 import { AppState } from '../common/AppState';
 import { ReadState, StreamFilter } from '../common/Constants';
+import { FolderDragSession } from '../common/FolderDragSession';
 import { extractFirstUrl } from '../common/UrlUtil';
-import { LibrarySummary, FlowRepository } from '../repository/FlowRepository';
+import { LibrarySummary, BatchImpact, BatchOutcome, FlowRepository } from '../repository/FlowRepository';
 import { BookmarkRow } from './BookmarkRow';
+import { FolderPicker } from './FolderPicker';
 
 class FilterOption {
   label: string = '';
@@ -25,6 +28,7 @@ const PAGE_SIZE: number = 50;
 @ComponentV2
 export struct StreamHome {
   @Param isWide: boolean = false;
+  @Param folderDocked: boolean = false;
   @Param refreshKey: number = 0;
   @Event onOpen: (id: string) => void = (id: string) => {};
   @Event onCompose: () => void = () => {};
@@ -37,18 +41,21 @@ export struct StreamHome {
   @Local keyword: string = '';
   @Local filter: number = StreamFilter.ALL;
   @Local sort: number = BookmarkSort.CREATED_DESC;
+  @Local folderLabel: string = '';
   @Local loading: boolean = true;
   @Local hasMore: boolean = false;
   @Local loadingMore: boolean = false;
   @Local todayCount: number = 0;
   @Local focusIndex: number = 0;
-  @Local selectionMode: boolean = false;
-  @Local selectedIds: string[] = [];
+  @Local batchMoveOpen: boolean = false;
   @Local actionTarget: Bookmark = new Bookmark();
   @Local showActions: boolean = false;
+  @Local bookmarkMoveOpen: boolean = false;
+  @Local dragSession: FolderDragSession = FolderDragSession.shared;
   private batchBusy: boolean = false;
   private searchTimer: number = -1;
   private loadGeneration: number = 0;
+  private pendingReload: boolean = false;
 
   aboutToAppear(): void {
     this.load();
@@ -62,13 +69,39 @@ export struct StreamHome {
 
   @Monitor('appState.refreshTick')
   onLibraryChanged(): void {
+    if (this.dragSession.active) {
+      this.pendingReload = true;
+      return;
+    }
     this.load();
+  }
+
+  @Monitor('dragSession.active')
+  onDragSessionChanged(): void {
+    if (!this.dragSession.active && this.pendingReload) {
+      this.pendingReload = false;
+      this.load();
+    }
   }
 
   @Monitor('appState.tagFilter')
   onTagFilterChanged(): void {
     this.exitSelection();
     this.load();
+  }
+
+  @Monitor('appState.folderFilter')
+  onFolderFilterChanged(): void {
+    this.exitSelection();
+    this.load();
+  }
+
+  @Monitor('appState.selectionMode')
+  onRowSelectionModeChanged(): void {
+    if (!this.appState.selectionMode) {
+      this.batchMoveOpen = false;
+      this.bookmarkMoveOpen = false;
+    }
   }
 
   @Monitor('refreshKey')
@@ -82,6 +115,9 @@ export struct StreamHome {
     query.tag = this.appState.tagFilter;
     query.keyword = this.keyword;
     query.sort = this.sort;
+    // Direct-membership folder filter: subfolder bookmarks are reached by
+    // drilling into their own folder rows, not by expanding the subtree here.
+    query.folderId = this.appState.folderFilter;
     return query;
   }
 
@@ -91,6 +127,12 @@ export struct StreamHome {
     const repo = FlowRepository.get();
     this.loading = true;
     try {
+      if (this.appState.folderFilter.length > 0) {
+        const folder = await repo.getFolder(this.appState.folderFilter);
+        this.folderLabel = folder !== undefined ? folder.name : '';
+      } else {
+        this.folderLabel = '';
+      }
       const page = await repo.queryPage(this.currentQuery(), 0, PAGE_SIZE);
       if (generation !== this.loadGeneration) {
         return;
@@ -98,9 +140,9 @@ export struct StreamHome {
       this.filtered = page.items;
       this.hasMore = page.hasMore;
       this.focusIndex = 0;
-      this.selectedIds = this.pruneSelection(page.items);
-      if (this.selectionMode && this.selectedIds.length === 0) {
-        this.selectionMode = false;
+      this.pruneSelection(page.items);
+      if (this.appState.selectionMode && this.appState.rowSelectionCount() === 0) {
+        this.appState.clearRowSelection();
       }
       if (this.showActions && !this.containsId(page.items, this.actionTarget.id)) {
         this.showActions = false;
@@ -174,70 +216,70 @@ export struct StreamHome {
     return false;
   }
 
-  private pruneSelection(items: Bookmark[]): string[] {
-    const next: string[] = [];
-    for (let i = 0; i < this.selectedIds.length; i++) {
-      if (this.containsId(items, this.selectedIds[i])) {
-        next.push(this.selectedIds[i]);
-      }
+  private pruneSelection(items: Bookmark[]): void {
+    const live: string[] = [];
+    for (let i = 0; i < items.length; i++) {
+      live.push(items[i].id);
     }
-    return next;
+    this.appState.pruneBookmarkSelection(live);
   }
 
   private isChecked(id: string): boolean {
-    return this.selectedIds.indexOf(id) >= 0;
+    return this.appState.isBookmarkSelected(id);
+  }
+
+  private selectedCount(): number {
+    return this.appState.rowSelectionCount();
   }
 
   private toggleSelect(id: string): void {
-    const index = this.selectedIds.indexOf(id);
-    const next = this.selectedIds.slice();
-    if (index >= 0) {
-      next.splice(index, 1);
-    } else {
-      next.push(id);
+    this.appState.toggleBookmarkSelected(id);
+  }
+
+  private toggleSelectionMode(): void {
+    if (this.appState.selectionMode) {
+      this.exitSelection();
+      return;
     }
-    this.selectedIds = next;
-    this.selectionMode = next.length > 0;
+    this.appState.selectionMode = true;
+    this.showActions = false;
   }
 
   private enterSelection(id: string): void {
     this.showActions = false;
-    this.selectionMode = true;
-    if (!this.isChecked(id)) {
-      const next = this.selectedIds.slice();
-      next.push(id);
-      this.selectedIds = next;
-    }
+    this.appState.beginRowSelection(id);
   }
 
   private exitSelection(): void {
-    this.selectionMode = false;
-    this.selectedIds = [];
+    this.appState.clearRowSelection();
+    this.batchMoveOpen = false;
+    this.bookmarkMoveOpen = false;
   }
 
   private finishActions(): void {
     this.showActions = false;
+    this.bookmarkMoveOpen = false;
     this.exitSelection();
   }
 
   private selectAllLoaded(): void {
-    if (this.selectedIds.length === this.filtered.length) {
-      this.selectedIds = [];
-      this.selectionMode = false;
+    if (this.appState.selectedBookmarkIds.length === this.filtered.length) {
+      this.appState.selectedBookmarkIds = [];
+      this.appState.selectionMode = this.appState.rowSelectionCount() > 0;
       return;
     }
     const next: string[] = [];
     for (let i = 0; i < this.filtered.length; i++) {
       next.push(this.filtered[i].id);
     }
-    this.selectedIds = next;
-    this.selectionMode = next.length > 0;
+    this.appState.setBookmarkSelection(next);
   }
 
   private requestActions(id: string): void {
     for (let i = 0; i < this.filtered.length; i++) {
       if (this.filtered[i].id === id) {
         this.actionTarget = this.filtered[i];
+        this.bookmarkMoveOpen = false;
         this.showActions = true;
         return;
       }
@@ -245,8 +287,8 @@ export struct StreamHome {
   }
 
   private allSelectedMatch(match: (item: Bookmark) => boolean): boolean {
-    return this.selectedIds.length > 0 &&
-      this.countSelectedMatch(match) === this.selectedIds.length;
+    return this.appState.selectedBookmarkIds.length > 0 &&
+      this.countSelectedMatch(match) === this.appState.selectedBookmarkIds.length;
   }
 
   private anySelectedMatch(match: (item: Bookmark) => boolean): boolean {
@@ -300,10 +342,10 @@ export struct StreamHome {
   }
 
   private async batchStar(): Promise<void> {
-    if (this.batchBusy || this.selectedIds.length === 0) {
+    if (this.batchBusy || this.appState.selectedBookmarkIds.length === 0) {
       return;
     }
-    const ids = this.selectedIds.slice();
+    const ids = this.appState.selectedBookmarkIds.slice();
     const next = !this.allSelectedStarred();
     const added = this.countSelectedMatch((item: Bookmark) => !item.starred);
     this.batchBusy = true;
@@ -319,10 +361,10 @@ export struct StreamHome {
   }
 
   private async batchArchive(): Promise<void> {
-    if (this.batchBusy || this.selectedIds.length === 0) {
+    if (this.batchBusy || this.appState.selectedBookmarkIds.length === 0) {
       return;
     }
-    const ids = this.selectedIds.slice();
+    const ids = this.appState.selectedBookmarkIds.slice();
     const next = !this.allSelectedArchived();
     this.batchBusy = true;
     try {
@@ -337,10 +379,10 @@ export struct StreamHome {
   }
 
   private async batchRead(): Promise<void> {
-    if (this.batchBusy || this.selectedIds.length === 0) {
+    if (this.batchBusy || this.appState.selectedBookmarkIds.length === 0) {
       return;
     }
-    const ids = this.selectedIds.slice();
+    const ids = this.appState.selectedBookmarkIds.slice();
     const next = this.allSelectedRead() ? ReadState.UNREAD : ReadState.READ;
     this.batchBusy = true;
     try {
@@ -351,6 +393,102 @@ export struct StreamHome {
       AppState.shared.toast('批量标记失败，请重试');
     } finally {
       this.batchBusy = false;
+    }
+  }
+
+  private batchResultToast(outcome: BatchOutcome, verb: string): void {
+    const suffix = outcome.skipped > 0 ? `，跳过 ${outcome.skipped} 项` : '';
+    AppState.shared.toast(`已${verb} ${outcome.done} 项${suffix}`);
+  }
+
+  private runBatchMove(folderId: string, label: string): void {
+    const books = this.appState.selectedBookmarkIds.slice(0);
+    const folders = this.appState.selectedFolderIds.slice(0);
+    if (books.length + folders.length === 0) {
+      AppState.shared.toast('先勾选要移动的行');
+      return;
+    }
+    this.batchMoveOpen = false;
+    FlowRepository.get().batchMove(books, folders, folderId).then((outcome: BatchOutcome): void => {
+      this.batchResultToast(outcome, `移到${label.length > 0 ? label : '根目录'}`);
+      this.exitSelection();
+    }).catch((): void => {
+      AppState.shared.toast('批量移动失败，请稍后再试');
+    });
+  }
+
+  private runBatchMoveOut(): void {
+    const books = this.appState.selectedBookmarkIds.slice(0);
+    const folders = this.appState.selectedFolderIds.slice(0);
+    if (books.length + folders.length === 0) {
+      AppState.shared.toast('先勾选要移出的行');
+      return;
+    }
+    FlowRepository.get().batchMoveOut(books, folders).then((outcome: BatchOutcome): void => {
+      this.batchResultToast(outcome, '移出');
+      this.exitSelection();
+    }).catch((): void => {
+      AppState.shared.toast('批量移出失败，请稍后再试');
+    });
+  }
+
+  private confirmBatchDelete(): void {
+    const books = this.appState.selectedBookmarkIds.slice(0);
+    const folders = this.appState.selectedFolderIds.slice(0);
+    if (books.length + folders.length === 0) {
+      AppState.shared.toast('先勾选要删除的行');
+      return;
+    }
+    if (folders.length === 0) {
+      this.confirmTrash(books);
+      return;
+    }
+    FlowRepository.get().batchDeleteImpact(books, folders).then((impact: BatchImpact): void => {
+      const parts: string[] = [];
+      if (impact.folders > 0) {
+        parts.push(`${impact.folders} 个文件夹（连同子文件夹内 ${impact.subtreeBooks} 条笺）`);
+      }
+      if (impact.looseBooks > 0) {
+        parts.push(`${impact.looseBooks} 条笺`);
+      }
+      AlertDialog.show({
+        title: '批量删除？',
+        message: `将把${parts.join('与')}移入回收站，可在回收站恢复。`,
+        primaryButton: {
+          value: '取消',
+          action: () => {}
+        },
+        secondaryButton: {
+          value: '删除',
+          fontColor: $r('app.color.danger'),
+          action: (): void => {
+            this.runBatchDelete(books, folders);
+          }
+        }
+      });
+    }).catch((): void => {
+      AppState.shared.toast('删除失败，请稍后再试');
+    });
+  }
+
+  private runBatchDelete(books: string[], folders: string[]): void {
+    FlowRepository.get().batchDelete(books, folders).then((outcome: BatchOutcome): void => {
+      this.batchResultToast(outcome, '删除');
+      this.exitSelection();
+    }).catch((): void => {
+      AppState.shared.toast('删除失败，请稍后再试');
+    });
+  }
+
+  private beginDragFromBookmark(id: string): void {
+    if (this.isChecked(id)) {
+      this.dragSession.begin(this.appState.selectedBookmarkIds.slice(0), this.appState.selectedFolderIds.slice(0), id);
+    } else {
+      this.dragSession.begin([id], [], id);
+    }
+    this.showActions = false;
+    if (!this.folderDocked) {
+      this.appState.folderDrawerOpen = true;
     }
   }
 
@@ -482,8 +620,21 @@ export struct StreamHome {
     }
   }
 
+  private async runBookmarkMove(folderId: string, label: string): Promise<void> {
+    const id = this.actionTarget.id;
+    this.showActions = false;
+    this.bookmarkMoveOpen = false;
+    try {
+      await FlowRepository.get().setBookmarkFolder(id, folderId);
+      AppState.shared.toast(`已移到${label.length > 0 ? label : '根目录'}`);
+    } catch (error) {
+      AppState.shared.toast('移动失败，请稍后再试');
+    }
+  }
+
   private selectFilter(value: number): void {
     this.filter = value;
+    this.appState.homeFilter = value;
     this.exitSelection();
     this.showActions = false;
     this.load();
@@ -539,28 +690,28 @@ export struct StreamHome {
   build() {
     Column() {
       Row() {
+        if (!this.folderDocked) {
+          Text('☰')
+            .fontSize(16)
+            .fontColor($r('app.color.ink_secondary'))
+            .width(44)
+            .height(44)
+            .textAlign(TextAlign.Center)
+            .accessibilityText('打开文件夹')
+            .focusable(true)
+            .onClick(() => {
+              this.appState.folderDrawerOpen = true;
+            })
+        }
         Blank()
-        Text('标签')
+        Text(this.appState.selectionMode ? '完成' : '批量')
           .fontSize(12)
           .fontColor($r('app.color.ink_secondary'))
           .height(44)
           .padding({ left: 8, right: 8 })
-          .accessibilityText('打开标签页')
-          .onClick(() => this.onOpenPane('tags'))
-        Text('同步')
-          .fontSize(12)
-          .fontColor($r('app.color.ink_secondary'))
-          .height(44)
-          .padding({ left: 8, right: 8 })
-          .accessibilityText('打开同步页')
-          .onClick(() => this.onOpenPane('sync'))
-        Text('设置')
-          .fontSize(12)
-          .fontColor($r('app.color.ink_secondary'))
-          .height(44)
-          .padding({ left: 8, right: 8 })
-          .accessibilityText('打开设置页')
-          .onClick(() => this.onOpenPane('settings'))
+          .accessibilityText(this.appState.selectionMode ? '退出批量选择' : '进入批量选择')
+          .focusable(true)
+          .onClick(() => this.toggleSelectionMode())
       }
       .width('100%')
       .padding({ left: 20, right: 12 })
@@ -691,6 +842,25 @@ export struct StreamHome {
         .padding({ left: 20, right: 20 })
       }
 
+      if (this.appState.folderFilter.length > 0) {
+        Row({ space: 6 }) {
+          Text(`文件夹：${this.folderLabel}`)
+            .fontSize(12)
+            .fontColor($r('app.color.ink_secondary'))
+          Text('×')
+            .fontSize(14)
+            .fontColor($r('app.color.ink_secondary'))
+            .height(44)
+            .width(44)
+            .textAlign(TextAlign.Center)
+            .accessibilityText('清除文件夹筛选')
+            .onClick(() => {
+              this.appState.folderFilter = '';
+            })
+        }
+        .padding({ left: 20, right: 20 })
+      }
+
       if (this.loading) {
         this.SkeletonList()
       } else if (this.filtered.length === 0) {
@@ -705,10 +875,14 @@ export struct StreamHome {
                   index: index,
                   keyword: this.keyword,
                   selected: this.isWide && item.id === this.appState.selectedId,
-                  selectionMode: this.selectionMode,
+                  selectionMode: this.appState.selectionMode,
                   checked: this.isChecked(item.id),
+                  selectedBookmarkIds: this.appState.selectedBookmarkIds,
+                  selectedFolderIds: this.appState.selectedFolderIds,
+                  dragEnabled: !item.deleted,
                   onOpen: (id: string) => {
                     this.showActions = false;
+                    this.bookmarkMoveOpen = false;
                     this.onOpen(id);
                   },
                   onToggleStar: (id: string, starred: boolean) => {
@@ -716,6 +890,8 @@ export struct StreamHome {
                   },
                   onRequestActions: (id: string) => this.requestActions(id),
                   onToggleSelect: (id: string) => this.toggleSelect(id),
+                  onBeginDrag: (id: string) => this.beginDragFromBookmark(id),
+                  onDragFinished: () => this.dragSession.end(),
                   onMoveFocus: (delta: number) => this.moveFocus(delta),
                   onFocused: (focused: number) => {
                     this.focusIndex = focused;
@@ -727,7 +903,7 @@ export struct StreamHome {
                   .margin({ left: 20, right: 20 })
               }
               .bindPopup(
-                this.showActions && !this.selectionMode && this.actionTarget.id === item.id,
+                this.showActions && !this.appState.selectionMode && this.actionTarget.id === item.id,
                 {
                   builder: this.QuickActionPanel,
                   placement: Placement.Bottom,
@@ -739,6 +915,7 @@ export struct StreamHome {
                   onStateChange: (event: PopupStateChangeParam) => {
                     if (!event.isVisible && this.actionTarget.id === item.id) {
                       this.showActions = false;
+                      this.bookmarkMoveOpen = false;
                     }
                   }
                 }
@@ -755,7 +932,7 @@ export struct StreamHome {
         })
       }
 
-      if (this.selectionMode) {
+      if (this.appState.selectionMode) {
         this.BatchActionBar()
       }
     }
@@ -780,58 +957,107 @@ export struct StreamHome {
       .accessibilityText(label())
       .focusable(true)
       .onClick(action)
+      .onKeyEvent((event: KeyEvent) => {
+        if (event.type === KeyType.Down &&
+          (event.keyCode === KeyCode.KEYCODE_ENTER || event.keyCode === KeyCode.KEYCODE_SPACE)) {
+          action();
+        }
+      })
   }
 
   @Builder
   QuickActionPanel() {
-    Flex({ wrap: FlexWrap.Wrap }) {
-      if (this.actionTarget.deleted) {
-        this.ActionChip(() => '恢复', false, () => {
-          this.restoreItems([this.actionTarget.id]);
+    if (this.bookmarkMoveOpen) {
+      Column({ space: 6 }) {
+        Row() {
+          Text(`移动「${this.actionTarget.title.length > 0 ? this.actionTarget.title : this.actionTarget.url}」到…`)
+            .fontSize(12)
+            .fontColor($r('app.color.ink_secondary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+          Text('取消')
+            .fontSize(12)
+            .fontColor($r('app.color.ink_secondary'))
+            .height(32)
+            .padding({ left: 8, right: 8 })
+            .accessibilityText('取消移动书签')
+            .onClick(() => {
+              this.bookmarkMoveOpen = false;
+            })
+        }
+        .width('100%')
+
+        FolderPicker({
+          selectedId: this.actionTarget.folderId,
+          rootLabel: '根目录',
+          pickerHeight: 170,
+          onPick: (folderId: string, label: string): void => {
+            this.runBookmarkMove(folderId, label);
+          }
         })
-        this.ActionChip(() => '彻底删除', true, () => {
-          this.confirmPurge([this.actionTarget.id]);
-        })
-        this.ActionChip(() => '多选', false, () => this.enterSelection(this.actionTarget.id))
-      } else {
-        this.ActionChip(() => '打开', false, () => {
-          const id = this.actionTarget.id;
-          this.showActions = false;
-          this.onOpen(id);
-        })
-        this.ActionChip(() => '多选', false, () => this.enterSelection(this.actionTarget.id))
-        this.ActionChip(() => this.actionTarget.starred ? '取消星标' : '加星标', false, () => {
-          this.quickToggleStar();
-        })
-        this.ActionChip(() => this.actionTarget.archived ? '取消归档' : '归档', false, () => {
-          this.quickToggleArchive();
-        })
-        this.ActionChip(() => this.actionTarget.readState === ReadState.READ ? '标记未读' : '标记已读', false, () => {
-          this.quickToggleRead();
-        })
-        this.ActionChip(() => '删除', true, () => {
-          this.confirmTrash([this.actionTarget.id]);
-        })
+          .width('100%')
       }
+      .width(236)
+      .padding({ left: 10, right: 10, top: 8, bottom: 8 })
+    } else {
+      Flex({ wrap: FlexWrap.Wrap }) {
+        if (this.actionTarget.deleted) {
+          this.ActionChip(() => '恢复', false, () => {
+            this.restoreItems([this.actionTarget.id]);
+          })
+          this.ActionChip(() => '彻底删除', true, () => {
+            this.confirmPurge([this.actionTarget.id]);
+          })
+          this.ActionChip(() => '多选', false, () => this.enterSelection(this.actionTarget.id))
+        } else {
+          this.ActionChip(() => '打开', false, () => {
+            const id = this.actionTarget.id;
+            this.showActions = false;
+            this.onOpen(id);
+          })
+          this.ActionChip(() => '多选', false, () => this.enterSelection(this.actionTarget.id))
+          this.ActionChip(() => '移动到文件夹', false, () => {
+            this.bookmarkMoveOpen = true;
+          })
+          this.ActionChip(() => this.actionTarget.starred ? '取消星标' : '加星标', false, () => {
+            this.quickToggleStar();
+          })
+          this.ActionChip(() => this.actionTarget.archived ? '取消归档' : '归档', false, () => {
+            this.quickToggleArchive();
+          })
+          this.ActionChip(() => this.actionTarget.readState === ReadState.READ ? '标记未读' : '标记已读', false, () => {
+            this.quickToggleRead();
+          })
+          this.ActionChip(() => '删除', true, () => {
+            this.confirmTrash([this.actionTarget.id]);
+          })
+        }
+      }
+      .width(260)
+      .padding({ left: 10, right: 10, top: 8, bottom: 8 })
     }
-    .width(260)
-    .padding({ left: 10, right: 10, top: 8, bottom: 8 })
   }
 
   @Builder
   BatchActionBar() {
     Column({ space: 10 }) {
       Row({ space: 8 }) {
-        Text(`已选 ${this.selectedIds.length} 项`)
+        Text(`已选 ${this.selectedCount()} 项`)
           .fontSize(13)
           .fontColor($r('app.color.ink'))
+        if (this.appState.selectedFolderIds.length > 0) {
+          Text(`含 ${this.appState.selectedFolderIds.length} 个文件夹`)
+            .fontSize(11)
+            .fontColor($r('app.color.ink_tertiary'))
+        }
         Blank()
-        Text(this.selectedIds.length === this.filtered.length ? '取消全选' : '全选')
+        Text(this.appState.selectedBookmarkIds.length === this.filtered.length ? '取消全选' : '全选')
           .fontSize(12)
           .fontColor($r('app.color.ink_secondary'))
           .height(36)
           .padding({ left: 8, right: 8 })
-          .accessibilityText(this.selectedIds.length === this.filtered.length ? '取消全选当前列表' : '全选当前列表')
+          .accessibilityText(this.appState.selectedBookmarkIds.length === this.filtered.length ? '取消全选当前列表' : '全选当前列表')
           .onClick(() => this.selectAllLoaded())
         Text('完成')
           .fontSize(12)
@@ -843,26 +1069,67 @@ export struct StreamHome {
       }
       .width('100%')
 
+      if (this.batchMoveOpen) {
+        Column({ space: 6 }) {
+          Row() {
+            Text('移动所选项到…')
+              .fontSize(12)
+              .fontColor($r('app.color.ink_secondary'))
+              .layoutWeight(1)
+            Text('取消')
+              .fontSize(12)
+              .fontColor($r('app.color.ink_secondary'))
+              .height(32)
+              .padding({ left: 8, right: 8 })
+              .accessibilityText('取消批量移动')
+              .onClick(() => {
+                this.batchMoveOpen = false;
+              })
+          }
+          .width('100%')
+
+          FolderPicker({
+            rootLabel: '根目录',
+            pickerHeight: 170,
+            excludeSubtreeOfIds: this.appState.selectedFolderIds.slice(0),
+            onPick: (folderId: string, label: string): void => {
+              this.runBatchMove(folderId, label);
+            }
+          })
+            .width('100%')
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+      }
+
       Flex({ wrap: FlexWrap.Wrap }) {
         if (this.filter === StreamFilter.TRASH) {
           this.ActionChip(() => '恢复', false, () => {
-            this.restoreItems(this.selectedIds.slice());
+            this.restoreItems(this.appState.selectedBookmarkIds.slice());
           })
           this.ActionChip(() => '彻底删除', true, () => {
-            this.confirmPurge(this.selectedIds.slice());
+            this.confirmPurge(this.appState.selectedBookmarkIds.slice());
           })
         } else {
-          this.ActionChip(() => this.starActionLabel(), false, () => {
-            this.batchStar();
+          if (this.appState.selectedBookmarkIds.length > 0) {
+            this.ActionChip(() => this.starActionLabel(), false, () => {
+              this.batchStar();
+            })
+            this.ActionChip(() => this.archiveActionLabel(), false, () => {
+              this.batchArchive();
+            })
+            this.ActionChip(() => this.readActionLabel(), false, () => {
+              this.batchRead();
+            })
+          }
+          this.ActionChip(() => '移动到…', false, () => {
+            this.batchMoveOpen = !this.batchMoveOpen;
           })
-          this.ActionChip(() => this.archiveActionLabel(), false, () => {
-            this.batchArchive();
-          })
-          this.ActionChip(() => this.readActionLabel(), false, () => {
-            this.batchRead();
+          this.ActionChip(() => '移出一级', false, () => {
+            this.runBatchMoveOut();
           })
           this.ActionChip(() => '删除', true, () => {
-            this.confirmTrash(this.selectedIds.slice());
+            this.confirmBatchDelete();
           })
         }
       }

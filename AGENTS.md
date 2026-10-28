@@ -11,9 +11,9 @@
 | 平台 | HarmonyOS Stage 模型，API 26，phone / tablet / 2in1 |
 | 模块 | 仅 `entry`（HAP）；无 HAR、无多端模块、无第三方运行时依赖 |
 | 状态 | `@ObservedV2` + `@Trace` + `@ComponentV2` + `@Local` / `@Param` / `@Event` / `@Monitor` |
-| 数据 | RDB `flowpage.db`（6 表 + 7 索引）、preferences、`filesDir/snapshots/*.txt` |
-| 同步 | WebDAV（Basic Auth），ETag 增量 + LWW；无分布式 KV、无账号体系 |
-| 测试 | `@ohos/hypium`，`entry/src/ohosTest` 12 个套件 / 130 个用例，仅设备端 |
+| 数据 | RDB `flowpage.db`（7 表 + 9 索引）、preferences、`filesDir/snapshots/*.txt` |
+| 同步 | WebDAV（Basic Auth），ETag 增量 + LWW；书签/文件夹/墓碑三类实体；无分布式 KV、无账号体系 |
+| 测试 | `@ohos/hypium`，`entry/src/ohosTest` 15 个套件 / 185 个用例，仅设备端 |
 
 ## 构建与验证（顺序有讲究）
 
@@ -57,9 +57,9 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
                                       │
                                       ▼
                           FlowRepository（单例，UI 只依赖它）
-                           ├─ BookmarkDao + Database（RDB）
+                           ├─ BookmarkDao + FolderDao + Database（RDB）
                            ├─ MetadataService / SnapshotStore / ReaderPageLoader
-                           ├─ SyncEngine + WebDavTransport
+                           ├─ SyncEngine + WebDavTransport（书签 + 文件夹 + 墓碑）
                            └─ CardPublisher / CardSnapshot
 ```
 
@@ -113,6 +113,8 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   误判成网络耗时。模拟器测量注意：连续 `dumpLayout`+`hdc file recv` 会触发病毒扫描风暴污染心跳
   （出现过 6.7–8.1 s 假阻塞），心跳采样必须在无并发 hdc 操作的静默窗口；`uitest keyEvent`（ESC）在长会话
   后可能被系统焦点吞掉，UI 驱动 pop 用界面「返回」按钮。
+- 本节性能数字是当前权威口径（易变数字唯一维护点）；复测方法与各轮原始数据见
+  `docs/records/05-browser-link-reading.md` 与 `openspec/changes/archive/reader-perf-round3/`。
 
 ## 代码约定
 
@@ -121,6 +123,14 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   `common/PlatformError.ets`），新增业务代码不要再用 `as`。
 - 主 UI 统一 V2 装饰器；**只有** `entry/src/main/ets/widget/pages/` 的桌面卡片使用 V1
   `@Component` + `@LocalStorageProp`（FormKit 约束），不要混用。
+- 文件夹管理属主页：`FolderPanel` 挂在最左页面栏——≥1000vp 停靠在 `SideNav` 内（导航项下方，栏宽 280vp），
+  <1000vp 由主页左上角按钮打开左侧抽屉（遮罩，点外部/返回关闭）。抽屉顶部复用 `NAV_ITEMS` 渲染主导航
+  （含流笺），主页头部不放 标签/同步/设置，只剩 ☰（窄屏）与「批量」。树的展开集合、滚动位置与抽屉开合在
+  `AppState`；跨列多选与拖拽会话也走 `AppState` / `FolderDragSession`，投放由侧栏直接提交。点树行把流过滤到
+  该文件夹的**直属书签**（`BookmarkQuery.folderId` 等值，子文件夹内容经其行下钻；树行计数仍含全部子孙）。
+  长按拖拽只改归属（`bookmark.folder_id` / `folder.parent_id`），**不写** `position` / `createdAt`；
+  批量与拖拽共用 `FlowRepository.batchMove/batchMoveOut/batchDelete`，单次 `notify()`。行操作入口是行尾
+  「…」锚定面板（桌面右键同入口），不要再加长按菜单或 context menu；无拖拽路径经 `FolderPicker`。
 - 动态文案不要只放在带参 `@Builder` 里：实测 `ReadingShell` 的「网页/阅读」标签在模式切换后会残留旧值，
   改为直接内联 `Text` 或提升到 `@Local` 状态；其余带参 builder 的静态文案不受影响。
 - 内置 Web 复用 `INTERNET` 权限，不要新增权限；`target=_blank`/`window.open` 用
@@ -131,13 +141,19 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
 - 日志 `hilog`，domain `0x0000`，TAG `'flowpage'`。
 - 注释只写代码表达不出的约束，英文，与该文件现有风格一致。
 - 提交遵循现有 Conventional Commits（`fix(sync): ...`、`docs: ...`）；**未经明确要求不要 commit/push**。
-- 现有文档 `docs/records/01-implementation-log.md` 含历史批次记录，可能落后于代码（例如“28 个用例”、已删除的
-  `BrowserPage`/Permissions）。以源码和本文件为准。
+
+## 待决事项
+
+1. 是否提供第二台鸿蒙设备，用于碰一碰、分布式与更多跨端验收。
+2. 是否配置 App Linking 域名并完成 `/.well-known/applinking.json` 校验。
+3. 内置浏览器是否扩展为多标签/无痕（当前单标签、可编辑地址、阅读模式切换）。
+4. 服务卡片与键盘完整路径的人工验收由谁在何时完成。
 
 ## 文档地图
 
-- `docs/wiki/`：分层 Code Wiki（架构 / UI / 数据 / 同步与服务 / 构建运行）。
-- `docs/product/`、`docs/design/`、`docs/engineering/`：产品需求、UI 规范、技术方案与实施计划。
-- `docs/quality/`：走查清单与走查问题修复记录。
-- `docs/records/`：实现记录与两轮复审结论及修复批次；文档里的勾选只是声明，落地与否必须回代码与测试验证。
-- `docs/README.md`：设计文档索引；根 `README.md` 面向使用者。
+- 文档索引：[docs/README.md](docs/README.md)；分层架构详解：[docs/wiki/](docs/wiki/README.md)。
+- 方向性决策（为什么这样做）：[docs/adr/](docs/adr/README.md)，append-only，推翻走 Superseded 链。
+- 进行中与已完成变更：`openspec/changes/`；能力规格（系统持久行为契约）见 `openspec/specs/`；规划新变更先看 `openspec/config.yaml` 内的项目约束。
+- `docs/quality/`、`docs/records/` 是只追加的历史快照；文档里的勾选只是声明，落地与否必须回代码与测试
+  验证。现有 `docs/records/01-implementation-log.md` 含历史批次记录，可能落后于代码（例如“28 个用例”、
+  已删除的 `BrowserPage`/Permissions），以源码和本文件为准。

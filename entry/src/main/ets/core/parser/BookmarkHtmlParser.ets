@@ -6,6 +6,10 @@ export class ParsedBookmarks {
   invalidCount: number = 0;
   inFileDuplicates: number = 0;
   invalidUrls: string[] = [];
+  // Top-level folder name -> browser semantic kind ('toolbar' | 'unfiled'),
+  // from PERSONAL_TOOLBAR_FOLDER / UNFILED_BOOKMARKS_FOLDER H3 attributes.
+  // First marker wins for duplicate names; deeper H3s are ignored.
+  topMarks: Map<string, string> = new Map();
 }
 
 function decodeEntities(input: string): string {
@@ -48,6 +52,9 @@ export class BookmarkHtmlParser {
     const folderReg = new RegExp('<H3[^>]*>([\\s\\S]*?)</H3>', 'i');
     const anchorReg = new RegExp('<A\\s+[^>]*>([\\s\\S]*?)</A>', 'i');
     const hrefReg = new RegExp('href\\s*=\\s*["\\\']([^"\\\']+)["\\\']', 'i');
+    const addDateReg = new RegExp('ADD_DATE\\s*=\\s*["\\\']?([0-9]+)', 'i');
+    const toolbarReg = new RegExp('PERSONAL_TOOLBAR_FOLDER\\s*=\\s*["\\\']?(true|1)', 'i');
+    const unfiledReg = new RegExp('UNFILED_BOOKMARKS_FOLDER\\s*=\\s*["\\\']?(true|1)', 'i');
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -55,6 +62,15 @@ export class BookmarkHtmlParser {
       if (line.indexOf('<H3') >= 0) {
         const folderMatch = folderReg.exec(line);
         pendingFolder = folderMatch !== null ? cleanText(folderMatch[1]) : '';
+        // Marker semantics only exist at the root level (stack holds just the
+        // outer DL's empty entry); tolerate files missing the outer wrapper.
+        if (pendingFolder.length > 0 && stack.length <= 1 && !parsed.topMarks.has(pendingFolder)) {
+          if (toolbarReg.test(line)) {
+            parsed.topMarks.set(pendingFolder, 'toolbar');
+          } else if (unfiledReg.test(line)) {
+            parsed.topMarks.set(pendingFolder, 'unfiled');
+          }
+        }
         continue;
       }
 
@@ -109,10 +125,23 @@ export class BookmarkHtmlParser {
         pendingFolder = '';
       }
 
+      // ADD_DATE is unix seconds; reject absurd values (0 or far future).
+      let addedAt = 0;
+      const addDateMatch = addDateReg.exec(line);
+      if (addDateMatch !== null) {
+        const seconds = Number(addDateMatch[1]);
+        const futureGuard = Math.floor(Date.now() / 1000) + 86400;
+        if (Number.isFinite(seconds) && seconds > 0 && seconds < futureGuard) {
+          addedAt = seconds * 1000;
+        }
+      }
+
       const bookmark = new ImportedBookmark();
       bookmark.url = rawUrl;
       bookmark.title = title;
       bookmark.folderPath = parts.join('/');
+      bookmark.segments = parts;
+      bookmark.addedAt = addedAt;
       parsed.items.push(bookmark);
     }
     return parsed;

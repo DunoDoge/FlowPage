@@ -10,6 +10,9 @@ import conflictTest from './Conflict.test'
 import repositoryTest from './Repository.test'
 import queryTest from './Query.test'
 import importTest from './Import.test'
+import folderTest from './Folder.test'
+import folderDropTest from './FolderDrop.test'
+import folderHomeTest from './FolderHome.test'
 
 export default function testsuite() {
   webDavXmlTest()
@@ -24,4 +27,7 @@ export default function testsuite() {
   repositoryTest()
   queryTest()
   importTest()
+  folderTest()
+  folderDropTest()
+  folderHomeTest()
 }

@@ -25,7 +25,7 @@
 | N5 LIKE 未转义（P2） | CONFIRMED | `_`/`%` 当通配符，"a_b" 命中 "axb" |
 | N6 导入基准临界（P2） | CONFIRMED | 实测 6454–6973ms 为预算 81%–87%，首跑偶发失败已被本轮设备运行复现 |
 | N7 卡片 '\|' 分隔符冲突（P2） | CONFIRMED | **补充**：标题含换行是另一种失败模式——行被 split('\n') 切开后 id 仍正确、仅标题错；含 '\|' 才是错 id → 卡片跳转空白页。'\' 入口齐全（og:title、手动编辑、导入 cleanText 均不去 '\|'） |
-| N8 fillTags 全表 join + 每刷新 7 查询（P2） | CONFIRMED | Query 基准断言 1000<300ms / 10k<800ms，是 docs/engineering/02-implementation-plan.md:121 验收口径（10k ≤100ms）的 3–8 倍宽松 |
+| N8 fillTags 全表 join + 每刷新 7 查询（P2） | CONFIRMED | Query 基准断言 1000<300ms / 10k<800ms，是 docs/records/06-implementation-plan.md:121 验收口径（10k ≤100ms）的 3–8 倍宽松 |
 | 高亮修复 7 项子断言 | 全部 CONFIRMED | key 因含 index 必唯一；全库 13 处 ForEach 扫描，仅 DetailContent.ets:623 一处 index-only key |
 | 修复声明抽查（clearAll 保墓碑 / 上传竞态条件化 / editContent 单事务） | 全部 CONFIRMED | 上轮"已修复"判定非误判 |
 | 测试审查（67 例、旧套件未改、断言未削弱） | CONFIRMED | rg 实数 67；旧 4 套件不在 git diff 中 |
@@ -110,7 +110,7 @@
 1. `[x]` **T3.1 回归用例**：merge/rename 撞名时"只带目标标签的无关书签"不被 touch（dirty/rev 不变）——本轮 `mergeTagsTouchesBothSides` 缺此对照断言，是 N1 漏网原因。
 2. `[x]` **T3.2 用例**：rename/merge/delete 后 `search_text` 含新名不含旧名。
 3. `[x]` **T3.4 用例**：upsertFromRemote 覆盖后 folderPath/source 保留本地值。
-4. `[x]` **基准口径**：`Query.test.ets:137/150` 现为 1000<300ms、10k<800ms，与 `docs/engineering/02-implementation-plan.md:121`（10k ≤100ms）差 3–8 倍。处理：热查询断言收紧到验收口径（或 200ms 内），另设独立的冷启动"记录不判费"用例；`Import.test.ets:139` 的 `elapsed<8000` 在部分设备临界（本轮首跑失败复跑通过），建议改为记录 + 更宽保险阈值（如 12s）并在低端设备复测。
+4. `[x]` **基准口径**：`Query.test.ets:137/150` 现为 1000<300ms、10k<800ms，与 `docs/records/06-implementation-plan.md:121`（10k ≤100ms）差 3–8 倍。处理：热查询断言收紧到验收口径（或 200ms 内），另设独立的冷启动"记录不判费"用例；`Import.test.ets:139` 的 `elapsed<8000` 在部分设备临界（本轮首跑失败复跑通过），建议改为记录 + 更宽保险阈值（如 12s）并在低端设备复测。
 5. `[x]` 冲突链路用例（FakeTransport 可测）："恢复本地 → 下一轮同步上传本地版本"由 `SyncEngineTest.restoredLocalConflictUploadsOnNextSync` 覆盖；另补 `tagMergeDoesNotOverwriteRemoteEditOfTargetOnlyBookmark` 覆盖 N1 的 FETCH→UPLOAD 路径。
 
 ## 4. 文档修正清单
@@ -274,7 +274,7 @@ hdc -t 127.0.0.1:37565 shell aa test -b com.dunodoge.flowpage -m entry_test -s u
 7. T3.7 卡片序列化分隔符：'|' 换成标题中不可能出现的控制字符（如 \u0001），写入与 TodayCard/
    RecentCard 解析同步改，写入侧标题压单行。
 8. T3.8 fillTags 按页 id 集合过滤；summaryCounts 合并单 SQL。
-9. 测试口径：Query 基准热查询断言对齐 docs/engineering/02-implementation-plan.md:121（10k ≤100ms，可放宽到 200ms 内），冷启动单独
+9. 测试口径：Query 基准热查询断言对齐 docs/records/06-implementation-plan.md:121（10k ≤100ms，可放宽到 200ms 内），冷启动单独
    记录不判费；Import 5000 条断言放宽保险阈值（12s）并在低端设备复测后回填。
 10. 文档同步（docs/records/03-review-follow-up.md §4 全表）：用例数 63→67（AGENTS.md:16、wiki/05:77、docs/quality/01-walkthrough-checklist.md:69/104、
     docs/records/02-code-review.md §10.2、README.md:78、docs/README.md:38）；wiki/02 五处过期表述；wiki/03:70 事务表述；

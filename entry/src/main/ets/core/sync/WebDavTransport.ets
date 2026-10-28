@@ -150,27 +150,39 @@ export class WebDavTransport implements SyncTransport {
     await this.ensureCollection('FlowPage');
     await this.ensureCollection('FlowPage/v1');
     await this.ensureCollection('FlowPage/v1/items');
+    await this.ensureCollection('FlowPage/v1/folders');
     await this.ensureCollection('FlowPage/v1/tombstones');
   }
 
-  async listItems(): Promise<RemoteItem[]> {
-    const response = await this.request('PROPFIND', 'FlowPage/v1/items/', PROPFIND_BODY, {
+  private async listCollection(dir: string, emptyOn404: boolean): Promise<RemoteItem[]> {
+    const response = await this.request('PROPFIND', `FlowPage/v1/${dir}/`, PROPFIND_BODY, {
       'Depth': '1',
       'Content-Type': 'application/xml; charset=utf-8'
     });
+    if (response.status === 404 && emptyOn404) {
+      return [];
+    }
+    if (response.status === 404) {
+      throw new Error('NOT_FOUND');
+    }
     if (response.status === 401) {
       throw new Error('AUTH_401');
     }
     if (response.status === 403) {
       throw new Error('AUTH_403');
     }
-    if (response.status === 404) {
-      throw new Error('NOT_FOUND');
-    }
     if (response.status !== 207 && response.status !== 200) {
       throw new Error(`PROPFIND_${response.status}`);
     }
     return WebDavXml.parseItems(response.body);
+  }
+
+  async listItems(): Promise<RemoteItem[]> {
+    return this.listCollection('items', false);
+  }
+
+  async listFolders(): Promise<RemoteItem[]> {
+    return this.listCollection('folders', true);
   }
 
   async listTombstones(): Promise<string[]> {
@@ -213,14 +225,22 @@ export class WebDavTransport implements SyncTransport {
     }
   }
 
-  async get(name: string): Promise<WebDavResponse> {
-    return this.request('GET', `FlowPage/v1/items/${encodeURIComponent(name)}.json`, '', {});
+  private async collectionGet(dir: string, name: string): Promise<WebDavResponse> {
+    return this.request('GET', `FlowPage/v1/${dir}/${encodeURIComponent(name)}.json`, '', {});
   }
 
-  private async stat(name: string): Promise<string> {
+  async get(name: string): Promise<WebDavResponse> {
+    return this.collectionGet('items', name);
+  }
+
+  async getFolder(name: string): Promise<WebDavResponse> {
+    return this.collectionGet('folders', name);
+  }
+
+  private async stat(dir: string, name: string): Promise<string> {
     const response = await this.request(
       'PROPFIND',
-      `FlowPage/v1/items/${encodeURIComponent(name)}.json`,
+      `FlowPage/v1/${dir}/${encodeURIComponent(name)}.json`,
       PROPFIND_BODY,
       {
         'Depth': '0',
@@ -233,7 +253,7 @@ export class WebDavTransport implements SyncTransport {
     return WebDavXml.parseEtag(response.body);
   }
 
-  async put(name: string, json: string, etag: string): Promise<string> {
+  private async collectionPut(dir: string, name: string, json: string, etag: string): Promise<string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json; charset=utf-8'
     };
@@ -242,7 +262,7 @@ export class WebDavTransport implements SyncTransport {
     }
     const response = await this.request(
       'PUT',
-      `FlowPage/v1/items/${encodeURIComponent(name)}.json`,
+      `FlowPage/v1/${dir}/${encodeURIComponent(name)}.json`,
       json,
       headers
     );
@@ -260,7 +280,7 @@ export class WebDavTransport implements SyncTransport {
     let syncedEtag = response.etag;
     if (syncedEtag.length === 0) {
       try {
-        syncedEtag = await this.stat(name);
+        syncedEtag = await this.stat(dir, name);
       } catch (error) {
         syncedEtag = '';
       }
@@ -274,10 +294,31 @@ export class WebDavTransport implements SyncTransport {
     return syncedEtag;
   }
 
-  async remove(name: string): Promise<void> {
-    const response = await this.request('DELETE', `FlowPage/v1/items/${encodeURIComponent(name)}.json`, '', {});
+  async put(name: string, json: string, etag: string): Promise<string> {
+    return this.collectionPut('items', name, json, etag);
+  }
+
+  async putFolder(name: string, json: string, etag: string): Promise<string> {
+    return this.collectionPut('folders', name, json, etag);
+  }
+
+  private async collectionRemove(dir: string, name: string): Promise<void> {
+    const response = await this.request(
+      'DELETE',
+      `FlowPage/v1/${dir}/${encodeURIComponent(name)}.json`,
+      '',
+      {}
+    );
     if (response.status !== 204 && response.status !== 200 && response.status !== 404) {
       throw new Error(`DELETE_${response.status}`);
     }
+  }
+
+  async remove(name: string): Promise<void> {
+    await this.collectionRemove('items', name);
+  }
+
+  async removeFolder(name: string): Promise<void> {
+    await this.collectionRemove('folders', name);
   }
 }

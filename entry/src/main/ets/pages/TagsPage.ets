@@ -135,7 +135,7 @@ export struct TagsPage {
         .width('100%')
         .padding({ left: 20, right: 20, top: 14 })
 
-      Text('文件夹是旧的秩序，标签是新的。')
+      Text('文件夹记得来处，标签记下想法。')
         .fontSize(12)
         .fontColor($r('app.color.ink_tertiary'))
         .width('100%')
@@ -155,7 +155,7 @@ export struct TagsPage {
           Text('还没有标签')
             .fontSize(17)
             .fontColor($r('app.color.ink'))
-          Text('收笺时写一个，或从导入的文件夹里长出来。')
+          Text('收笺时写一个；标签只来自你的手。')
             .fontSize(13)
             .fontColor($r('app.color.ink_secondary'))
         }

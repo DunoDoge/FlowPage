@@ -155,7 +155,6 @@ export struct SettingsPage {
     this.importResult = undefined;
     try {
       const options = new ImportOptions();
-      options.keepFolders = true;
       options.onProgress = (done: number, total: number) => {
         this.progressText = `${done} / ${total}`;
       };

@@ -1,12 +1,13 @@
 import { AppState } from '../common/AppState';
 import { Pane } from '../common/Constants';
+import { FolderPanel } from './FolderPanel';
 
-class NavItem {
+export class NavItem {
   label: string = '';
   pane: string = '';
 }
 
-const NAV_ITEMS: NavItem[] = [
+export const NAV_ITEMS: NavItem[] = [
   { label: '流笺', pane: Pane.DETAIL },
   { label: '标签', pane: Pane.TAGS },
   { label: '同步', pane: Pane.SYNC },
@@ -57,7 +58,20 @@ export struct SideNav {
         .onClick(() => this.onSelect(item.pane))
       }, (item: NavItem) => item.pane)
 
-      Blank()
+      Divider()
+        .strokeWidth(1)
+        .color($r('app.color.line'))
+        .margin({ top: 8 })
+
+      Column() {
+        FolderPanel({
+          isWide: true,
+          docked: true
+        })
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .clip(false)
 
       Column({ space: 6 }) {
         Text('本地优先')

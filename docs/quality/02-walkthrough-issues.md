@@ -462,7 +462,7 @@ curl -u 邮箱:应用密码 -X PROPFIND -H "Depth: 0" \
 
 - `components/StreamHome.ets`：首页大标题改为「流笺」。
 - `components/NavigationRail.ets`：2in1 侧栏导航项改为「流笺」。
-- `docs/product/`、`docs/design/`、`docs/engineering/`、`docs/quality/` 中作为页面标题/导航名的「笺流」统一改为「流笺」；Launcher、分享面板、导出标题保持「流笺」。
+- `docs/product/`、`docs/design/`、`docs/quality/` 与当时的 engineering 目录（该目录已于 2026-10-26 退役，见 [adr/](../adr/README.md)）中作为页面标题/导航名的「笺流」统一改为「流笺」；Launcher、分享面板、导出标题保持「流笺」。
 
 **验证**
 

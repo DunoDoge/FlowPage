@@ -1,7 +1,9 @@
 import { Bookmark } from '../model/Bookmark';
 import { KeyCode } from '@kit.InputKit';
+import { unifiedDataChannel } from '@kit.ArkData';
 import { HighlightSegment, highlightSegments } from '../common/Highlight';
 import { ReadState } from '../common/Constants';
+import { FolderDragSession } from '../common/FolderDragSession';
 import { formatRelative } from '../common/DateUtil';
 import { domainOf } from '../common/UrlUtil';
 
@@ -13,12 +15,17 @@ export struct BookmarkRow {
   @Param selected: boolean = false;
   @Param selectionMode: boolean = false;
   @Param checked: boolean = false;
+  @Param selectedBookmarkIds: string[] = [];
+  @Param selectedFolderIds: string[] = [];
+  @Param dragEnabled: boolean = true;
   @Event onOpen: (id: string) => void = (id: string) => {};
   @Event onToggleStar: (id: string, starred: boolean) => void = (id: string, starred: boolean) => {};
   @Event onMoveFocus: (delta: number) => void = (delta: number) => {};
   @Event onFocused: (index: number) => void = (index: number) => {};
   @Event onRequestActions: (id: string) => void = (id: string) => {};
   @Event onToggleSelect: (id: string) => void = (id: string) => {};
+  @Event onBeginDrag: (id: string) => void = (id: string) => {};
+  @Event onDragFinished: () => void = () => {};
   @Local pressing: boolean = false;
   private suppressClick: boolean = false;
 
@@ -36,14 +43,13 @@ export struct BookmarkRow {
   }
 
   private requestActions(): void {
+    if (this.selectionMode) {
+      return;
+    }
     this.suppressClick = true;
     setTimeout(() => {
       this.suppressClick = false;
     }, 400);
-    if (this.selectionMode) {
-      this.onToggleSelect(this.bookmark.id);
-      return;
-    }
     this.onRequestActions(this.bookmark.id);
   }
 
@@ -52,11 +58,24 @@ export struct BookmarkRow {
       this.suppressClick = false;
       return;
     }
-    if (this.selectionMode) {
-      this.onToggleSelect(this.bookmark.id);
-      return;
-    }
     this.onOpen(this.bookmark.id);
+  }
+
+  private startDrag(event: DragEvent): DragItemInfo {
+    this.pressing = false;
+    this.onBeginDrag(this.bookmark.id);
+    const data = new unifiedDataChannel.PlainText();
+    data.textContent = FolderDragSession.PAYLOAD;
+    event.setData(new unifiedDataChannel.UnifiedData(data));
+    const info: DragItemInfo = { extraInfo: FolderDragSession.PAYLOAD };
+    return info;
+  }
+
+  private dragBadge(): number {
+    if (this.checked) {
+      return this.selectedBookmarkIds.length + this.selectedFolderIds.length;
+    }
+    return 1;
   }
 
   build() {
@@ -126,17 +145,14 @@ export struct BookmarkRow {
         this.pressing = false;
         this.activate();
       })
-      .gesture(
-        LongPressGesture({ repeat: false, duration: 420 })
-          .onAction(() => {
-            this.pressing = false;
-            this.requestActions();
-          })
-      )
-      .onMouse((event: MouseEvent) => {
-        if (event.button === MouseButton.Right && event.action === MouseAction.Press) {
-          this.requestActions();
-        }
+      .draggable(this.dragEnabled)
+      .dragPreviewOptions({ numberBadge: this.dragBadge() })
+      .onDragStart((event: DragEvent): DragItemInfo => {
+        return this.startDrag(event);
+      })
+      .onDragEnd(() => {
+        this.pressing = false;
+        this.onDragFinished();
       })
 
       if (!this.selectionMode) {
@@ -157,6 +173,20 @@ export struct BookmarkRow {
             this.onToggleStar(this.bookmark.id, next);
           })
       }
+
+      if (!this.selectionMode) {
+        Button('…')
+          .type(ButtonType.Normal)
+          .fontSize(16)
+          .fontColor($r('app.color.ink_secondary'))
+          .backgroundColor(Color.Transparent)
+          .width(32)
+          .height(44)
+          .padding(0)
+          .margin({ right: 4 })
+          .accessibilityText('更多操作')
+          .onClick(() => this.requestActions())
+      }
     }
     .id(`bookmark-row-${this.bookmark.id}`)
     .width('100%')
@@ -164,6 +194,14 @@ export struct BookmarkRow {
     .padding({ left: 20, right: 24, top: 16, bottom: 16 })
     .alignItems(VerticalAlign.Top)
     .backgroundColor(this.pressing || this.selected || this.checked ? $r('app.color.surface_alt') : Color.Transparent)
+    // Desktop right-click opens the same anchored panel as the trailing "…"
+    // button (D12); bound on the whole row like the folder rows so the hit
+    // area covers the full row, not just the text column.
+    .onMouse((event: MouseEvent) => {
+      if (event.button === MouseButton.Right && event.action === MouseAction.Press) {
+        this.requestActions();
+      }
+    })
     .accessibilityText(`${this.displayTitle()}，${this.subtitle()}`)
     .focusable(true)
     .onFocus(() => {

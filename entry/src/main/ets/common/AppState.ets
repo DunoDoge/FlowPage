@@ -20,6 +20,18 @@ export class AppState {
   @Trace refreshTick: number = 0;
   @Trace toastText: string = '';
   @Trace tagFilter: string = '';
+  @Trace folderFilter: string = '';
+  // Home folder tree session state, hoisted so a phone detail round-trip
+  // (NavDestination cover) or a wide rebuild never resets expansion.
+  @Trace folderDrawerOpen: boolean = false;
+  @Trace folderPanelExpandedIds: string[] = [];
+  folderPanelScrollY: number = 0;
+  // The tree lives in the left rail while bookmark rows live in the stream
+  // column, so both components share one selection set from here.
+  @Trace selectionMode: boolean = false;
+  @Trace selectedBookmarkIds: string[] = [];
+  @Trace selectedFolderIds: string[] = [];
+  @Trace homeFilter: number = 0;
   @Trace inboxUrl: string = '';
   @Trace showInbox: boolean = false;
   @Trace readingOpen: boolean = false;
@@ -90,6 +102,76 @@ export class AppState {
 
   goPane(pane: string): void {
     this.pane = pane;
+  }
+
+  rowSelectionCount(): number {
+    return this.selectedBookmarkIds.length + this.selectedFolderIds.length;
+  }
+
+  isBookmarkSelected(id: string): boolean {
+    return this.selectedBookmarkIds.indexOf(id) >= 0;
+  }
+
+  isFolderSelected(id: string): boolean {
+    return this.selectedFolderIds.indexOf(id) >= 0;
+  }
+
+  toggleBookmarkSelected(id: string): void {
+    const next = this.selectedBookmarkIds.slice();
+    const index = next.indexOf(id);
+    if (index >= 0) {
+      next.splice(index, 1);
+    } else {
+      next.push(id);
+    }
+    this.selectedBookmarkIds = next;
+    this.selectionMode = this.rowSelectionCount() > 0;
+  }
+
+  toggleFolderSelected(id: string): void {
+    const next = this.selectedFolderIds.slice();
+    const index = next.indexOf(id);
+    if (index >= 0) {
+      next.splice(index, 1);
+    } else {
+      next.push(id);
+    }
+    this.selectedFolderIds = next;
+    this.selectionMode = this.rowSelectionCount() > 0;
+  }
+
+  beginRowSelection(id: string): void {
+    this.selectionMode = true;
+    if (!this.isBookmarkSelected(id)) {
+      this.selectedBookmarkIds = this.selectedBookmarkIds.concat([id]);
+    }
+  }
+
+  setBookmarkSelection(ids: string[]): void {
+    this.selectedBookmarkIds = ids;
+    this.selectionMode = this.rowSelectionCount() > 0;
+  }
+
+  pruneBookmarkSelection(liveIds: string[]): void {
+    const next = this.selectedBookmarkIds.filter((one: string): boolean => liveIds.indexOf(one) >= 0);
+    if (next.length !== this.selectedBookmarkIds.length) {
+      this.selectedBookmarkIds = next;
+      this.selectionMode = this.rowSelectionCount() > 0;
+    }
+  }
+
+  pruneFolderSelection(liveIds: string[]): void {
+    const next = this.selectedFolderIds.filter((one: string): boolean => liveIds.indexOf(one) >= 0);
+    if (next.length !== this.selectedFolderIds.length) {
+      this.selectedFolderIds = next;
+      this.selectionMode = this.rowSelectionCount() > 0;
+    }
+  }
+
+  clearRowSelection(): void {
+    this.selectionMode = false;
+    this.selectedBookmarkIds = [];
+    this.selectedFolderIds = [];
   }
 
   clearSelection(): void {

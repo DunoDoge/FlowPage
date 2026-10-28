@@ -9,4 +9,8 @@ export interface SyncTransport {
   get(name: string): Promise<WebDavResponse>;
   put(name: string, json: string, etag: string): Promise<string>;
   remove(name: string): Promise<void>;
+  listFolders(): Promise<RemoteItem[]>;
+  getFolder(name: string): Promise<WebDavResponse>;
+  putFolder(name: string, json: string, etag: string): Promise<string>;
+  removeFolder(name: string): Promise<void>;
 }

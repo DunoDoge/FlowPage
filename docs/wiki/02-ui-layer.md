@@ -54,9 +54,10 @@
   目录/搜索跳转先 `ensureMounted(index)`；位置恢复若目标在窗口外会扩窗并重试（10 × 200 ms，
   超大页上该预算时序敏感——重试耗尽即回落顶部，已知边角见 AGENTS.md）。
   未全量挂载时进度按块下标估算，全量挂载后仍用像素比例；批次边界不会提前标记已读（`onReadComplete` 在全量挂载后进度 ≥90% 或到达末尾时触发）。
-  实测 648 块页面：专注阅读首帧 2.5 s → 0.4 s，单次链接点击的主线程阻塞 5.7–7.2 s → 0.36–0.53 s。
+  实测 648 块页面（2026-10 二/三轮，原始数据见 [records/05](../records/05-browser-link-reading.md)）：
+  专注阅读首帧 2.5 s → 0.4 s，单次链接点击的主线程阻塞 5.7–7.2 s → 0.36–0.53 s。
 - **ReaderView 搜索走 taskpool**：`applySearch` 异步化——索引（小写全文 + 每块偏移）按 `articleSignature`
-  惰性构建并缓存（1,999 块约 6 ms，一次性留在 UI 线程），检索交给 `ReaderSearchService`（2 s 超时 + 同步回退），
+  惰性构建并缓存（1,999 块约 6 ms，2026-10-25 实测；一次性留在 UI 线程），检索交给 `ReaderSearchService`（2 s 超时 + 同步回退），
   世代 token 丢弃过期结果；关闭搜索或换文/换书签时释放索引。命中集合与同步扫描严格等价
   （大小写不敏感、块内 containment、不跨块）。
 - “专注阅读”打开 [ReadingShell.ets](../../entry/src/main/ets/components/ReadingShell.ets)（`Index` 根部
