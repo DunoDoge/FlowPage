@@ -5,7 +5,7 @@ import { Database } from '../../../main/ets/core/db/Database';
 import { BookmarkDao } from '../../../main/ets/core/db/BookmarkDao';
 import { FolderDao } from '../../../main/ets/core/db/FolderDao';
 import { Bookmark } from '../../../main/ets/model/Bookmark';
-import { BookmarkQuery } from '../../../main/ets/model/BookmarkQuery';
+import { BookmarkQuery, BookmarkSort } from '../../../main/ets/model/BookmarkQuery';
 import { FlowRepository } from '../../../main/ets/repository/FlowRepository';
 import { AppState } from '../../../main/ets/common/AppState';
 import { FolderDragSession } from '../../../main/ets/common/FolderDragSession';
@@ -148,7 +148,10 @@ export default function folderHomeTest() {
       }
 
       // Members inside the target folder still come out in createdAt order.
-      const books = await repo.bookmarksInFolder(first.id);
+      const booksQuery = new BookmarkQuery();
+      booksQuery.folderId = first.id;
+      booksQuery.sort = BookmarkSort.CREATED_ASC;
+      const books = await dao.queryPage(booksQuery, 0, 50);
       expect(books.length).assertEqual(1);
       if (books.length === 1) {
         expect(books[0].id).assertEqual(early.id);
@@ -191,7 +194,9 @@ export default function folderHomeTest() {
         expect(devAfter.parentId).assertEqual(archive.id);
         expect(devAfter.dirty).assertTrue();
       }
-      const devBooks = await repo.bookmarksInFolder(dev.id);
+      const devQuery = new BookmarkQuery();
+      devQuery.folderId = dev.id;
+      const devBooks = await dao.queryPage(devQuery, 0, 50);
       expect(devBooks.length).assertEqual(1);
       if (devBooks.length === 1) {
         expect(devBooks[0].id).assertEqual(member.id);
@@ -256,14 +261,6 @@ export default function folderHomeTest() {
         expect(memberAfter.folderId).assertEqual('');
       }
       expect(await repo.countFolderBookmarks(front.id)).assertEqual(0);
-      const rootBooks = await repo.bookmarksInFolder('');
-      let sawAtRoot = false;
-      for (let i = 0; i < rootBooks.length; i++) {
-        if (rootBooks[i].id === member.id) {
-          sawAtRoot = true;
-        }
-      }
-      expect(sawAtRoot).assertTrue();
     });
 
     it('folderFilterStacksWithTagAndStatus', 0, async () => {

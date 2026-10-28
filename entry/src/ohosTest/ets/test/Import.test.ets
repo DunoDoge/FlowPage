@@ -194,10 +194,10 @@ export default function importTest() {
       let rootPath = 'unset';
       for (let i = 0; i < parsed.items.length; i++) {
         if (parsed.items[i].url.indexOf('nested.example.com') >= 0) {
-          nestedPath = parsed.items[i].folderPath;
+          nestedPath = parsed.items[i].segments.join('/');
         }
         if (parsed.items[i].url.indexOf('root.example.com') >= 0) {
-          rootPath = parsed.items[i].folderPath;
+          rootPath = parsed.items[i].segments.join('/');
         }
       }
       expect(nestedPath).assertEqual('书签栏/开发');
@@ -272,7 +272,7 @@ export default function importTest() {
         expect(parsed.items[0].url.indexOf('order.example.com/one') >= 0).assertTrue();
         expect(parsed.items[1].url.indexOf('order.example.com/two') >= 0).assertTrue();
         expect(parsed.items[2].url.indexOf('order.example.com/three') >= 0).assertTrue();
-        expect(parsed.items[0].folderPath).assertEqual('排序');
+        expect(parsed.items[0].segments.join('/')).assertEqual('排序');
       }
     });
 
@@ -290,7 +290,7 @@ export default function importTest() {
       const exported = await FlowRepository.get().exportHtml();
       const parsed = BookmarkHtmlParser.parseAll(exported);
       expect(parsed.items.length).assertEqual(1);
-      expect(parsed.items[0].folderPath).assertEqual('AI/ML');
+      expect(parsed.items[0].segments.join('/')).assertEqual('AI/ML');
     });
 
     it('exportOmitsTagsAndDanglingFallsToRoot', 0, async () => {
@@ -304,7 +304,7 @@ export default function importTest() {
       expect(exported.indexOf('ghost-folder') < 0).assertTrue();
       const parsed = BookmarkHtmlParser.parseAll(exported);
       expect(parsed.items.length).assertEqual(1);
-      expect(parsed.items[0].folderPath).assertEqual('');
+      expect(parsed.items[0].segments.join('/')).assertEqual('');
     });
 
     it('importsFiveThousandWithinBudget', 0, async () => {

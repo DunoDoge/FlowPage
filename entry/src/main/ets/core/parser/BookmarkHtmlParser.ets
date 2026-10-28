@@ -24,16 +24,26 @@ function decodeEntities(input: string): string {
     ['&nbsp;', ' ']
   ];
   for (let i = 0; i < pairs.length; i++) {
-    text = text.replace(new RegExp(pairs[i][0], 'g'), pairs[i][1]);
+    text = text.split(pairs[i][0]).join(pairs[i][1]);
   }
   return text;
 }
 
+// Module-level regexes: parse() runs per imported line, keep them shared.
+const TAG_STRIP_RE = new RegExp('<[^>]+>', 'g');
+const SPACE_RE = new RegExp('\\s+', 'g');
+const FOLDER_RE = new RegExp('<H3[^>]*>([\\s\\S]*?)</H3>', 'i');
+const ANCHOR_RE = new RegExp('<A\\s+[^>]*>([\\s\\S]*?)</A>', 'i');
+const HREF_RE = new RegExp('href\\s*=\\s*["\\\']([^"\\\']+)["\\\']', 'i');
+const ADD_DATE_RE = new RegExp('ADD_DATE\\s*=\\s*["\\\']?([0-9]+)', 'i');
+const TOOLBAR_RE = new RegExp('PERSONAL_TOOLBAR_FOLDER\\s*=\\s*["\\\']?(true|1)', 'i');
+const UNFILED_RE = new RegExp('UNFILED_BOOKMARKS_FOLDER\\s*=\\s*["\\\']?(true|1)', 'i');
+
 function cleanText(input: string): string {
   let text = input;
-  text = text.replace(new RegExp('<[^>]+>', 'g'), ' ');
+  text = text.replace(TAG_STRIP_RE, ' ');
   text = decodeEntities(text);
-  text = text.replace(new RegExp('\\s+', 'g'), ' ');
+  text = text.replace(SPACE_RE, ' ');
   return text.trim();
 }
 
@@ -49,25 +59,18 @@ export class BookmarkHtmlParser {
     const seen = new Set<string>();
     let pendingFolder = '';
 
-    const folderReg = new RegExp('<H3[^>]*>([\\s\\S]*?)</H3>', 'i');
-    const anchorReg = new RegExp('<A\\s+[^>]*>([\\s\\S]*?)</A>', 'i');
-    const hrefReg = new RegExp('href\\s*=\\s*["\\\']([^"\\\']+)["\\\']', 'i');
-    const addDateReg = new RegExp('ADD_DATE\\s*=\\s*["\\\']?([0-9]+)', 'i');
-    const toolbarReg = new RegExp('PERSONAL_TOOLBAR_FOLDER\\s*=\\s*["\\\']?(true|1)', 'i');
-    const unfiledReg = new RegExp('UNFILED_BOOKMARKS_FOLDER\\s*=\\s*["\\\']?(true|1)', 'i');
-
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
       if (line.indexOf('<H3') >= 0) {
-        const folderMatch = folderReg.exec(line);
+        const folderMatch = FOLDER_RE.exec(line);
         pendingFolder = folderMatch !== null ? cleanText(folderMatch[1]) : '';
         // Marker semantics only exist at the root level (stack holds just the
         // outer DL's empty entry); tolerate files missing the outer wrapper.
         if (pendingFolder.length > 0 && stack.length <= 1 && !parsed.topMarks.has(pendingFolder)) {
-          if (toolbarReg.test(line)) {
+          if (TOOLBAR_RE.test(line)) {
             parsed.topMarks.set(pendingFolder, 'toolbar');
-          } else if (unfiledReg.test(line)) {
+          } else if (UNFILED_RE.test(line)) {
             parsed.topMarks.set(pendingFolder, 'unfiled');
           }
         }
@@ -91,7 +94,7 @@ export class BookmarkHtmlParser {
         continue;
       }
 
-      const hrefMatch = hrefReg.exec(line);
+      const hrefMatch = HREF_RE.exec(line);
       if (hrefMatch === null) {
         continue;
       }
@@ -108,7 +111,7 @@ export class BookmarkHtmlParser {
       }
       seen.add(normalized);
 
-      const anchorMatch = anchorReg.exec(line);
+      const anchorMatch = ANCHOR_RE.exec(line);
       let title = anchorMatch !== null ? cleanText(anchorMatch[1]) : '';
       if (title.length === 0) {
         title = domainOf(rawUrl);
@@ -127,7 +130,7 @@ export class BookmarkHtmlParser {
 
       // ADD_DATE is unix seconds; reject absurd values (0 or far future).
       let addedAt = 0;
-      const addDateMatch = addDateReg.exec(line);
+      const addDateMatch = ADD_DATE_RE.exec(line);
       if (addDateMatch !== null) {
         const seconds = Number(addDateMatch[1]);
         const futureGuard = Math.floor(Date.now() / 1000) + 86400;
@@ -139,7 +142,6 @@ export class BookmarkHtmlParser {
       const bookmark = new ImportedBookmark();
       bookmark.url = rawUrl;
       bookmark.title = title;
-      bookmark.folderPath = parts.join('/');
       bookmark.segments = parts;
       bookmark.addedAt = addedAt;
       parsed.items.push(bookmark);
@@ -150,8 +152,9 @@ export class BookmarkHtmlParser {
   static countFolders(items: ImportedBookmark[]): number {
     const set = new Set<string>();
     for (let i = 0; i < items.length; i++) {
-      if (items[i].folderPath.length > 0) {
-        set.add(items[i].folderPath);
+      const path = items[i].segments.join('/');
+      if (path.length > 0) {
+        set.add(path);
       }
     }
     return set.size;

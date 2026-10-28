@@ -7,7 +7,7 @@ import { FolderDao, buildFolderTree } from '../../../main/ets/core/db/FolderDao'
 import { Bookmark } from '../../../main/ets/model/Bookmark';
 import { Folder, FolderNode } from '../../../main/ets/model/Folder';
 import { FlowRepository } from '../../../main/ets/repository/FlowRepository';
-import { BookmarkQuery } from '../../../main/ets/model/BookmarkQuery';
+import { BookmarkQuery, BookmarkSort } from '../../../main/ets/model/BookmarkQuery';
 import { BookmarkSource } from '../../../main/ets/common/Constants';
 import { AppState } from '../../../main/ets/common/AppState';
 import { SyncRecord } from '../../../main/ets/core/sync/SyncRecord';
@@ -393,33 +393,27 @@ export default function folderTest() {
 
       await repo.setBookmarkFolder(bookmark.id, back.id);
 
-      const frontBooks = await repo.bookmarksInFolder(front.id);
-      expect(frontBooks.length).assertEqual(0);
-      const backBooks = await repo.bookmarksInFolder(back.id);
-      expect(backBooks.length).assertEqual(1);
-      if (backBooks.length === 1) {
-        expect(backBooks[0].id).assertEqual(bookmark.id);
-        expect(backBooks[0].dirty).assertTrue();
-      }
       const frontQuery = new BookmarkQuery();
       frontQuery.folderId = front.id;
       expect((await dao.queryPage(frontQuery, 0, 50)).length).assertEqual(0);
       const backQuery = new BookmarkQuery();
       backQuery.folderId = back.id;
-      expect((await dao.queryPage(backQuery, 0, 50)).length).assertEqual(1);
+      const backRows = await dao.queryPage(backQuery, 0, 50);
+      expect(backRows.length).assertEqual(1);
+      if (backRows.length === 1) {
+        expect(backRows[0].id).assertEqual(bookmark.id);
+        expect(backRows[0].dirty).assertTrue();
+      }
 
       await repo.setBookmarkFolder(bookmark.id, '');
-      const rootBooks = await repo.bookmarksInFolder('');
-      let sawAtRoot = false;
-      for (let i = 0; i < rootBooks.length; i++) {
-        if (rootBooks[i].id === bookmark.id) {
-          sawAtRoot = true;
-        }
+      const atRoot = await dao.findById(bookmark.id);
+      expect(atRoot === undefined).assertFalse();
+      if (atRoot !== undefined) {
+        expect(atRoot.folderId).assertEqual('');
       }
-      expect(sawAtRoot).assertTrue();
     });
 
-    it('bookmarksInFolderReturnsDirectOnlySortedByCreatedAt', 0, async () => {
+    it('folderQueryReturnsDirectOnlySortedByCreatedAt', 0, async () => {
       const repo = FlowRepository.get();
       const dao = new BookmarkDao();
       const top = await repo.createFolder('', '顶层');
@@ -451,7 +445,10 @@ export default function folderTest() {
       const atRoot = Bookmark.create('https://example.com/root', '根书签', BookmarkSource.MANUAL);
       await dao.insert(atRoot);
 
-      const books = await repo.bookmarksInFolder(top.id);
+      const booksQuery = new BookmarkQuery();
+      booksQuery.folderId = top.id;
+      booksQuery.sort = BookmarkSort.CREATED_ASC;
+      const books = await dao.queryPage(booksQuery, 0, 50);
       expect(books.length).assertEqual(2);
       if (books.length === 2) {
         expect(books[0].id).assertEqual(early.id);
@@ -776,8 +773,9 @@ export default function folderTest() {
         expect(memberAfter.deleted).assertFalse();
         expect(memberAfter.folderId).assertEqual(dev.id);
       }
-      const inRevived = await repo.bookmarksInFolder(dev.id);
-      expect(inRevived.length).assertEqual(1);
+      const revivedQuery = new BookmarkQuery();
+      revivedQuery.folderId = dev.id;
+      expect((await dao.queryPage(revivedQuery, 0, 50)).length).assertEqual(1);
       const tree = await repo.folderTree();
       expect(tree.length).assertEqual(2);
     });

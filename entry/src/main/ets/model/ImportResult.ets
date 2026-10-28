@@ -1,7 +1,6 @@
 export class ImportedBookmark {
   url: string = '';
   title: string = '';
-  folderPath: string = '';
   segments: string[] = [];
   addedAt: number = 0;
 }

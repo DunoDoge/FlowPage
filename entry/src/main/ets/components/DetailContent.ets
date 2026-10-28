@@ -23,9 +23,6 @@ export struct DetailContent {
   @Param showBack: boolean = false;
   @Param compact: boolean = false;
   @Event onBack: () => void = () => {};
-  // ESC fallback when there is no back button (wide shell): let the host page
-  // decide where to return (e.g. the folders pane the detail came from).
-  @Event onEscape: () => void = () => {};
   @Event onRemoved: () => void = () => {};
 
   @Local appState: AppState = AppState.shared;
@@ -550,12 +547,8 @@ export struct DetailContent {
     .height('100%')
     .backgroundColor($r('app.color.paper'))
     .onKeyEvent((event: KeyEvent) => {
-      if (event.type === KeyType.Down && event.keyCode === KeyCode.KEYCODE_ESCAPE) {
-        if (this.showBack) {
-          this.onBack();
-        } else {
-          this.onEscape();
-        }
+      if (event.type === KeyType.Down && event.keyCode === KeyCode.KEYCODE_ESCAPE && this.showBack) {
+        this.onBack();
       }
     })
   }

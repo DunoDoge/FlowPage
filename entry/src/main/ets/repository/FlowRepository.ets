@@ -2,7 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { Bookmark } from '../model/Bookmark';
-import { BookmarkPage, BookmarkQuery, BookmarkSort } from '../model/BookmarkQuery';
+import { BookmarkPage, BookmarkQuery } from '../model/BookmarkQuery';
 import { ArticleDocument } from '../model/Article';
 import { classifyMetadataWrite, MetadataApplyResult } from '../model/MetadataResult';
 import { ConflictRecord } from '../model/Conflict';
@@ -358,14 +358,6 @@ export class FlowRepository {
       total = total + (count !== undefined ? count : 0);
     }
     return total;
-  }
-
-  // Direct members of one folder ('' = root), browser order via ADD_DATE-kept createdAt.
-  async bookmarksInFolder(folderId: string): Promise<Bookmark[]> {
-    const query = new BookmarkQuery();
-    query.folderId = folderId;
-    query.sort = BookmarkSort.CREATED_ASC;
-    return this.dao.queryPage(query, 0, 500);
   }
 
   // Batch operations for the folder page multi-select mode: DAO calls loop
@@ -1032,16 +1024,16 @@ export class FlowRepository {
       const bookmark = Bookmark.create(item.url, item.title, BookmarkSource.IMPORT);
       bookmark.siteName = domainOf(item.url);
       if (item.segments.length > 0) {
+        // Resolve the top segment first: the marker lookup needs its id, and
+        // the shared cache makes the chain walk below hit it for free.
+        const topId = await this.folderDao.findOrCreate('', item.segments[0], folderCache);
         bookmark.folderId = await this.resolveFolderChain(item.segments, folderCache);
         // Apply the browser semantic marker once per top folder (D13);
         // setKind is idempotent, repeated imports stay sync-silent.
         const kind = parsed.topMarks.get(item.segments[0]);
-        if (kind !== undefined) {
-          const top = await this.folderDao.findByParentAndName('', item.segments[0]);
-          if (top !== undefined && !markedFolderIds.has(top.id)) {
-            markedFolderIds.add(top.id);
-            await this.folderDao.setKind(top.id, kind);
-          }
+        if (kind !== undefined && !markedFolderIds.has(topId)) {
+          markedFolderIds.add(topId);
+          await this.folderDao.setKind(topId, kind);
         }
       }
       if (item.addedAt > 0) {

@@ -386,3 +386,13 @@ hdc shell aa test -b com.dunodoge.flowpage -m entry_test -s unittest OpenHarmony
 2. `appState.homeFilter` 与 `StreamHome` 私有 `filter` 双份存储，断点切换时可能不一致，应收敛到 AppState 单份。
 3. 详情保存 `applyMetadata` 与 `setBookmarkFolder` 两阶段写、两次 notify，中途失败产生半保存态，可在 Repository 合并写入口。
 4. 冗余项：`FlowRepository.bookmarksInFolder()` 生产零调用（带 500 条截断，误用有丢数据隐患）；`ImportedBookmark.folderPath` 与 `segments` 冗余；`DetailContent.onEscape` 无调用方；`BookmarkHtmlParser` 3 处函数内 `new RegExp`（非热点，与存量风格一致）。
+
+### 11.3 冗余清理（2026-10-28，归档后跟进）
+
+按 §11.2 第 4 条执行，设备端 185/185、`codelinter` 0 error 复验通过：
+
+1. 删除 `FlowRepository.bookmarksInFolder()`：生产零调用且带 500 条截断隐患；测试改用 `dao.queryPage`（显式 `BookmarkSort.CREATED_ASC`）与 `findById` 等价断言，根目录断言改走 `folderId === ''`（`BookmarkQuery.folderId` 空串表示不过滤，无法表达根过滤）。
+2. 删除 `ImportedBookmark.folderPath`（与 `segments` 完全冗余）：`countFolders` 与测试统一为 `segments.join('/')`。
+3. 删除 `DetailContent.onEscape` 死事件（无调用方传入），ESC 处理收敛为 `showBack` 时的 `onBack`。
+4. `importHtml` topMarks 段消除二次查库：先经共享 cache `findOrCreate` 解析首段拿到 id，链解析随后命中缓存。
+5. `BookmarkHtmlParser` 正则全部提升为模块级常量；`decodeEntities` 改 split/join 不再构造正则。
