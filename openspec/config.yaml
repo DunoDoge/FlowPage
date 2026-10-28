@@ -1,0 +1,28 @@
+schema: spec-driven
+
+context: |
+  HarmonyOS ArkTS 单 HAP（entry），API 26，状态管理 V2，phone/tablet/2in1。
+  零第三方运行时依赖；RDB 为唯一事实源，WebDAV（LWW+墓碑）同步。
+  构建门禁：SDK 自带 hvigorw（>=7.26.8）assembleHap + codelinter -c code-linter.json5；
+  devecocli build 不支持本工程 modelVersion 26.0.0，禁止使用。
+  ArkTS 严格子集：禁 any、as 断言、结构化类型、动态属性访问。
+  文档中文为主；AGENTS.md 是唯一现在时事实源；未经明确要求不 commit/push。
+
+rules:
+  proposal:
+    - 中文撰写；不复制 AGENTS.md 约束原文，只引用
+  specs:
+    - WHEN/THEN 标记保留英文，内容中文
+  design:
+    - 每个决策给出备选方案与否决理由
+  tasks:
+    - 任务路径写仓库根路径；涉代码任务必须以 check_ets_files + hvigorw assembleHap 收尾
+    - 纯文档变更以全量内链 grep 校对收尾
+
+operations:
+  apply:
+    guidance:
+      - 完成后按 AGENTS.md 更新易变事实（若有）
+  archive:
+    guidance:
+      - 归档后把影响速查事实的结论吸收进 AGENTS.md

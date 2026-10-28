@@ -1,96 +1,46 @@
 # 流笺 FlowPage · 软件开发文档
 
-> 版本：v1.0 · 2026-10-21
-> 状态：批次 A/B/C 主体已实现，走查问题 N1–N11 已修复并验证；当前实现状态以本文件「当前状态」为准，历史结论见 `records/`
+> 本目录是**纯索引**。当前状态、构建门禁、性能口径等易变事实唯一维护于 [AGENTS.md](../AGENTS.md)；
+> 方向性决策（为什么这样做）见 [adr/](./adr/README.md)。
 
-## 文档时效约定
+## 文档时态约定
 
-`product/`、`design/`、`engineering/` 记录产品基线、设计规范与技术方案，其中标注「规划 / V1.1」的能力尚未落地；
-`quality/`、`records/` 是执行过程快照，文首有时效说明，不代表当前实现。判断代码现状时以源码、`wiki/` 和本文件为准。
+文档按时态各有唯一归宿，跨时态复制事实是漂移的根源：
 
-## 文档结构
-
-`docs/` 按用途分为五类，文件名统一为「两位序号 + 英文 kebab-case」；`wiki/` 是独立的 Code Wiki，不参与编号。
-
-| 目录 | 用途 | 维护方式 |
+| 时态 | 归宿 | 维护方式 |
 |---|---|---|
-| [product/](./product/) | 产品定位、用户、功能范围与业务规则 | 需求变化时更新 |
-| [design/](./design/) | 设计 token、布局断点、组件与动效规范 | 视觉变化时更新 |
-| [engineering/](./engineering/) | 技术方案、实施计划与验收标准 | 方案变化时更新 |
-| [quality/](./quality/) | 走查清单与缺陷修复记录 | 每轮走查追加 |
-| [records/](./records/) | 实现、复审与修复批次的历史记录 | 只追加；仅补时效标注与失效路径 |
-| [wiki/](./wiki/) | 分层 Code Wiki：架构、UI、数据、同步与服务、构建运行 | 随代码同步更新 |
+| 现在时 · 速查 | [AGENTS.md](../AGENTS.md) | 随代码同步更新；易变数字（用例数、耗时、内存）只在此处 |
+| 现在时 · 详解 | [wiki/](./wiki/README.md) | 随代码同步更新；引用而非复制易变数字 |
+| 过去时 · 决策 | [adr/](./adr/README.md) | append-only；推翻用 Superseded 链，不改写 |
+| 过去时 · 日志 | [quality/](./quality/)、[records/](./records/) | append-only；仅补时效标注与失效路径 |
+| 将来时 · 变更 | `openspec/changes/` | proposal → 实施 → 归档至 `archive/` |
+
+不随代码漂移的基线文档：[product/](./product/) 产品需求、[design/](./design/) 设计规范。
 
 ## 文档索引
 
 | 文档 | 内容 | 适合谁读 |
 |---|---|---|
+| [AGENTS.md](../AGENTS.md) | 项目快照、构建与验证、架构与数据流、性能约束、代码红线 | 开发 / 代理 |
+| [adr/README.md](./adr/README.md) | 方向性决策索引与 ADR 规则（ADR-0001 起） | 开发 / 评审 |
 | [product/01-prd.md](./product/01-prd.md) | 定位、竞品、用户、场景、差异化、功能范围、业务规则 | 产品 / 评审 |
 | [design/01-ui-spec.md](./design/01-ui-spec.md) | 设计 token、三断点布局、组件与页面规格、动效与无障碍 | 设计 / 前端 |
-| [engineering/01-tech-design.md](./engineering/01-tech-design.md) | 架构、数据模型、同步协议、鸿蒙能力接入、权限与测试 | 开发 / 架构 |
-| [engineering/02-implementation-plan.md](./engineering/02-implementation-plan.md) | 批次、里程碑、验收标准、测试用例、演示脚本 | 项目管理 / 验收 |
+| [wiki/README.md](./wiki/README.md) | 分层 Code Wiki：架构、UI、数据、同步与服务、构建运行 | 开发 / 维护 |
 | [quality/01-walkthrough-checklist.md](./quality/01-walkthrough-checklist.md) | 手机 / 2in1 / 同步走查步骤 | 测试 |
 | [quality/02-walkthrough-issues.md](./quality/02-walkthrough-issues.md) | 真机走查问题、定位与修复验收 | 下一会话 |
-| [records/01-implementation-log.md](./records/01-implementation-log.md) | 已实现功能、真机验证结果、偏差与待办 | 评审 / 验收 |
-| [records/02-code-review.md](./records/02-code-review.md) | 功能完成度、代码质量、P0/P1 问题、两批工作清单与新会话提示词 | 开发 / 评审 |
-| [records/03-review-follow-up.md](./records/03-review-follow-up.md) | 第二轮复审结论的三子代理复核、确认问题清单、测试/文档修正与第三批提示词 | 开发 / 评审 |
-| [records/04-reading-mode.md](./records/04-reading-mode.md) | 2026-10-22 阅读模式：结构化正文、全屏阅读器、偏好与验证记录 | 开发 / 评审 |
-| [records/05-browser-link-reading.md](./records/05-browser-link-reading.md) | 2026-10-22 内置浏览器与链接阅读：快照 v2、阅读栈、Web 提取与验证记录 | 开发 / 评审 |
-| [wiki/README.md](./wiki/README.md) | 分层 Code Wiki：架构、UI、数据、同步与服务、构建运行 | 开发 / 维护 |
+| [records/01-implementation-log.md](./records/01-implementation-log.md) | 批次 A/B/C 实现记录与真机验证（历史快照） | 评审 / 验收 |
+| [records/02-code-review.md](./records/02-code-review.md) | 功能完成度、代码质量、P0/P1 问题与修复批次（历史快照） | 开发 / 评审 |
+| [records/03-review-follow-up.md](./records/03-review-follow-up.md) | 第二轮复审结论复核与第三批修复（历史快照） | 开发 / 评审 |
+| [records/04-reading-mode.md](./records/04-reading-mode.md) | 2026-10-22 阅读模式批次（历史快照） | 开发 / 评审 |
+| [records/05-browser-link-reading.md](./records/05-browser-link-reading.md) | 2026-10-22/23 内置浏览器、链接阅读与性能轮次（历史快照） | 开发 / 评审 |
+| [records/06-implementation-plan.md](./records/06-implementation-plan.md) | 批次实施计划与验收标准（历史快照，2026-10-26 归档） | 项目管理 / 验收 |
 
-## 方案速览
+## 文档文件命名
 
-- **一句话**：把散落在浏览器、微信和各设备里的链接，三秒收进一册可离线、可搜索、可同步的「笺」。
-- **核心闭环**：收 → 理 → 找 → 用。
-- **差异化**：
-  1. 一笺三态（链接 + 离线快照 + 摘录），对抗「收藏即吃灰」；
-  2. 鸿蒙原生收笺（分享扩展 / 粘贴控件；碰一碰为 V1.1 规划）；
-  3. 时光轴 + 每日笺，让旧收藏重新流动；
-  4. 本地优先 + 自己的云（WebDAV 已实现；分布式数据为 V1.1 规划）。
-- **视觉**：极简纸感黑白，米白纸面、墨色文字、发丝线，无彩色、无渐变、无投影。
-- **同步**：本地 RDB 为唯一事实源；WebDAV 为主通道（已实现），分布式 KV 为同账号局域网增强通道（V1.1 规划）；LWW + 冲突记录。
-- **收笺入口**：分享扩展、HTML 导入、粘贴控件（已实现）；碰一碰/隔空传送（V1.1 规划）；内置浏览器已接入阅读/浏览闭环。
-- **阅读闭环**：详情 inline 阅读 → 专注阅读 → 正文链接逐层阅读 → 网页/阅读切换；链接页默认临时阅读，可手动收藏。
+`docs/` 文件名统一为「两位序号 + 英文 kebab-case」；`wiki/` 是独立的 Code Wiki，不参与编号；
+`adr/` 为 `NNNN-kebab-slug.md`。
 
-## 当前状态
+## 变更管理
 
-- 批次 A（单机核心）、批次 B 的 WebDAV 与已落地系统能力（接续、卡片注册）、批次 C 的隐私/阅读增强已完成并通过真机验证；阅读模式已补齐（结构化正文 + 全屏阅读器 + 正文链接阅读），内置浏览器已接入；分布式 KV、碰一碰仍未实现。
-- 已验证：分享扩展、HTML 导入、粘贴控件、标签/搜索、深色、一多、WebDAV 双向同步（本地测试服务 + 真实坚果云）、跨设备下载、HUKS 凭据加密、失效链接检测、阅读字号/行距/段距、自动快照开关、阅读状态、正文搜索、目录跳转、选中存摘录、正文链接连续阅读、内置 Web 浏览/阅读切换、冲突记录 UI、SQL 分页与搜索高亮。
-- 待完成：分布式 KV、App Linking 域名、碰一碰实测、WebDAV 端到端加密、冲突字段级合并、服务卡片人工添加验收、键盘完整路径验收、应用内隐私说明页；favicon 已明确不做。
-- 2026-10-21 复审：P0 4 项一致性问题（标签变更不同步、清空语义、快照文件生命周期、同步状态误报）与 P1 验收缺口已在同日第一/第二批收口。详见 [records/02-code-review.md](./records/02-code-review.md) §10。
-- 2026-10-21 第二轮复审 + 三子代理复核：第一/二批修复逐条核实有效；4 项 P1 与 5 项 P2 已于第三/第四批修复（T3.1–T3.8），详见 [records/03-review-follow-up.md](./records/03-review-follow-up.md)。
-- 测试：11 个套件 / 119 个用例；模拟器 119/119 通过，手机主功能 77/77 通过（旧 82 用例版因锁屏未复跑），见 [quality/01-walkthrough-checklist.md](./quality/01-walkthrough-checklist.md) §5。
-- 走查问题：N1–N11 已全部修复并验证，其中 N4 完成连接 207、手机上传 6 条、2in1 下载 6 条；N10/N11 修复重复同步与首页即时刷新。见 [quality/02-walkthrough-issues.md](./quality/02-walkthrough-issues.md)。
-- 背景与早期实现细节见 [records/01-implementation-log.md](./records/01-implementation-log.md)（历史快照）。
-
-## 已锁定决策
-
-| 决策 | 结论 |
-|---|---|
-| 同步底座 | 本地优先；WebDAV 已实现，分布式数据为 V1.1 规划 |
-| 收笺入口 | 已实现分享面板、HTML 导入、剪贴板；碰一碰为 V1.1 规划；内置浏览器已实现（单标签、阅读模式切换） |
-| 设备形态 | phone / tablet / 2in1 一多并重 |
-| 视觉方向 | 极简纸感黑白 |
-| 交付节奏 | 先文档评审，确认后开发 |
-| 包名 | `com.dunodoge.flowpage` |
-
-## 明确边界
-
-- 鸿蒙沙箱**无法读取其他浏览器书签库**；「浏览器书签同步」通过 HTML 导入 + 分享收笺 + 粘贴实现；内置浏览器用于应用内阅读与浏览，不读取其他浏览器数据。
-- V1.0 不包含账号体系、社交、云托管、浏览器扩展、Android/iOS。
-- 碰一碰、App Linking、分布式同步需要第二台设备与真实域名；应用接续已完成双机验证（仅恢复当前书签，不恢复滚动位置）。
-
-## 后续待决
-
-1. 是否提供第二台鸿蒙设备，用于碰一碰、分布式与更多跨端验收。
-2. 是否配置 App Linking 域名并完成 `/.well-known/applinking.json` 校验。
-3. 内置浏览器是否扩展为多标签/无痕（当前单标签、可编辑地址、阅读模式切换）。
-4. 服务卡片与键盘完整路径的人工验收由谁在何时完成。
-
-## 技术基线
-
-- HarmonyOS 6.0 / API 26，Stage 模型，ArkTS + ArkUI
-- 状态管理 V2，`Navigation` + `NavPathStack`
-- RDB `flowpage.db`（6 表 + 7 索引）+ preferences + 文件快照
-- 零第三方运行时依赖
-- 每个 `.ets` 文件优先跑快速 ArkTS 检查；阶段末用 `hvigorw clean assembleHap`（`devecocli` 内置 hvigor 不支持本工程 `modelVersion 26.0.0`）
+新功能与修改一律走 OpenSpec 变更流程（`openspec/changes/`，proposal / specs / design / tasks），
+完成后归档并按需把结论吸收进 AGENTS.md 与 wiki；项目约束见 `openspec/config.yaml`。

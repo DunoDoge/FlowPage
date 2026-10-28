@@ -20,3 +20,6 @@ local.properties
 *.key
 .DS_Store
 /.deveco
+/.agents
+/.qoder
+/.cache
