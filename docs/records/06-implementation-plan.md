@@ -1,11 +1,14 @@
 # 流笺 FlowPage · 实施计划与验收标准
 
-> 时效说明：本文是批次 A/B/C 的实施与验收基线；实际交付差异以 [records/02-code-review.md](../records/02-code-review.md)、
-> [records/03-review-follow-up.md](../records/03-review-follow-up.md) 和 [quality/01-walkthrough-checklist.md](../quality/01-walkthrough-checklist.md) 为准。
+> **历史快照（2026-10-26 归档）**：本文原为 engineering 目录下的 02-implementation-plan.md，是批次 A/B/C
+> 时期的实施与验收基线，append-only 冻结；文内路径与状态为当时快照，当前状态以
+> [AGENTS.md](../../AGENTS.md) 为准。
+> 时效说明：实际交付差异以 [records/02-code-review.md](./02-code-review.md)、
+> [records/03-review-follow-up.md](./03-review-follow-up.md) 和 [quality/01-walkthrough-checklist.md](../quality/01-walkthrough-checklist.md) 为准。
 > 未标注「规划」的验收项为当前版本目标；阅读模式与内置浏览器已交付（结构化正文 + 原生阅读器 + 链接阅读/单标签 Web），B6/B7、F16/F18 的跨端能力尚未全部落地。
 
 - 文档版本：v1.1（按实现校准）
-- 前置文档：`product/01-prd.md`、`engineering/01-tech-design.md`、`design/01-ui-spec.md`
+- 前置文档：`product/01-prd.md`、engineering 目录 01 号技术方案（已退役，选型理由见 [adr/](../adr/README.md)）、`design/01-ui-spec.md`
 - 当前环境：API 26 工程已实现并完成真机验证，不再是空工程
 
 ---
