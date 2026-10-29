@@ -72,6 +72,7 @@ export struct InboxSheet {
         .width('100%')
         .height('100%')
         .backgroundColor($r('app.color.overlay'))
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .onClick(() => this.appState.closeInbox())
 
       Column({ space: 12 }) {
@@ -164,6 +165,7 @@ export struct InboxSheet {
       .constraintSize({ maxWidth: 560 })
       .padding({ left: 22, right: 22, top: 12, bottom: 28 })
       .backgroundColor($r('app.color.surface'))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
       .borderRadius({ topLeft: 16, topRight: 16 })
       .onClick(() => {})
     }

@@ -138,6 +138,7 @@ struct SharePage {
     .height('100%')
     .padding({ left: 20, right: 20, top: 16, bottom: 20 })
     .backgroundColor($r('app.color.paper'))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .alignItems(HorizontalAlign.Start)
   }
 }

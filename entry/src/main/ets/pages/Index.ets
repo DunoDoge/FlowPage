@@ -178,6 +178,7 @@ struct Index {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.paper'))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .bindContentCover(this.appState.readingOpen, this.ReadingCover(), {
       enableSafeArea: true,
       onWillDismiss: (action: DismissContentCoverAction) => {
@@ -254,6 +255,7 @@ struct Index {
       .constraintSize({ maxWidth: 320 })
       .height('100%')
       .backgroundColor($r('app.color.paper'))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .border({ width: { right: 1 }, color: $r('app.color.line') })
       .clip(false)
 
@@ -261,6 +263,7 @@ struct Index {
         .layoutWeight(1)
         .height('100%')
         .backgroundColor($r('app.color.overlay'))
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
         .hitTestBehavior(this.dragSession.active ? HitTestMode.None : HitTestMode.Default)
         .onClick(() => {
           this.appState.folderDrawerOpen = false;
