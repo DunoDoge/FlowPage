@@ -80,13 +80,16 @@ hdc shell aa start -a EntryAbility -b com.dunodoge.flowpage
 |---|---|
 | `WebDavXmlTest` | ETag 大小写/缺失、目录过滤、URL 解码 |
 | `SyncPlannerTest` | 上传/下载/跳过/采纳 ETag 的规划分支 |
-| `SyncEngineTest` | FakeTransport 驱动上传、下载、墓碑删除、重试、不复活、标签合并不覆盖远端、schema 1 下载保留本地 folderPath/source、schema 2 下载采用远端值、恢复本地后下轮上传 |
-| `SyncStoreTest` | URL 归一化、去重、墓碑、dirty 竞态、冲突记录、SyncRecord schema 2、旧库 `applySchema` 迁移 |
+| `SyncEngineTest` | FakeTransport 驱动上传、下载、墓碑删除、重试、不复活、标签合并不覆盖远端、schema <3 下载保留本地 folderId、schema 3 采用远端 folderId、恢复本地后下轮上传；文件夹：改名同步单记录、LWW 远端改名胜、kind 双向、墓碑删远端文件、书签先于文件夹到达仍可见 |
+| `SyncStoreTest` | URL 归一化、去重、墓碑、dirty 竞态、冲突记录、SyncRecord schema 3 携带 folderId/source、旧库 `applySchema` 迁移 |
+| `FolderTest` | 树构建/计数/悬空/断环、同级重名拒绝（建/改名/移动）、级联软删除、直属过滤、findOrCreate 缓存、批量移动跳过自身子树、批量移出一级、导出 JSON 携带文件夹结构、混选批量删除（重叠/嵌套 rev 只 +1）、恢复复活文件夹链（共享祖先一次、撞名让位、容忍已清行）、远端落地同名去重 |
+| `FolderDropTest` | 投放规划纯函数：入自身/后代跳过、同父 noop、已在目标 noop、混选两类都动、全跳过无动作 |
+| `FolderHomeTest` | 拖拽会话携带与重置、行混选与剪枝、拖拽批量移动保持排序字段、移动/改名不动成员记录、投放到根=移出、文件夹过滤与标签/状态叠加 |
 | `TagSyncTest` | 标签改名/合并/删除 dirty 与 `search_text` 重建、只含目标标签的书签不受影响、重名合并、回收站计数 |
 | `SnapshotTest` | clearAll/purgeExpired/purge/purgeFromRemote 快照文件清理 |
 | `ReaderTest` | 正文提取容器/teaser/junk 规则、标题去重、发布结果分类、阅读进度、链接偏移/相对解析/非法协议、快照 v2 编解码、截断裁剪、搜索与链接分段 |
 | `ReaderSearchTest` | 纯函数命中等价性（多命中/大小写/边界不跨块/含分隔符/空输入）、buildIndex 偏移、searchSync 等价、taskpool 异步等价、解码容错 |
-| `ConflictTest` | 冲突计数、列表、恢复本地/采用远端、采用远端保留 folderPath/source |
+| `ConflictTest` | 冲突计数、列表、恢复本地/采用远端、采用远端保留本地 folderId/source |
 | `RepositoryTest` | 单次编辑 rev、阅读状态、自动快照开关、摘要口径、批次回滚、卡片序列化与 preferences 往返、纯函数 |
 | `QueryTest` | SQL 分页、关键字/标签过滤、LIKE 转义、域名排序、冷/热查询基准 |
 | `ImportTest` | 解析统计、预览、去重、取消、失败清单、5000 条导入记录（12s 保险阈值） |

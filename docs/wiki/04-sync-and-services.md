@@ -11,11 +11,12 @@
 └── FlowPage/
     └── v1/
         ├── items/<bookmark-id>.json       # 一条书签一个文件
-        └── tombstones/<bookmark-id>.json  # 彻底删除的墓碑
+        ├── folders/<folder-id>.json       # 一个文件夹一个文件
+        └── tombstones/<entity-id>.json    # 彻底删除的墓碑（书签与文件夹共用）
 ```
 
-`ensureBase()` 依次 MKCOL 这四层目录；`405` 视为已存在。文件名使用 `encodeURIComponent(id)`。
-正文快照、标签表结构、冲突记录都**不在远端**；远端只存 `SyncRecord` 的 JSON。
+`ensureBase()` 依次 MKCOL 这五层目录；`405` 视为已存在。文件名使用 `encodeURIComponent(id)`。
+正文快照、标签表结构、冲突记录都**不在远端**；远端只存 `SyncRecord` / `FolderSyncRecord` 的 JSON。
 
 ## 2. WebDavTransport
 
@@ -25,12 +26,14 @@
 | 方法 | HTTP | 约定 |
 |---|---|---|
 | `test()` | `PROPFIND` Depth 0 | 接受 207/200；401/403/404 转成明确错误 |
-| `ensureBase()` | `MKCOL` ×4 | 201/200/405 成功；409 → `PARENT_MISSING` |
+| `ensureBase()` | `MKCOL` ×5 | 201/200/405 成功；409 → `PARENT_MISSING` |
 | `listItems()` | `PROPFIND` Depth 1 | `WebDavXml.parseItems()`，只收 `.json` |
+| `listFolders()` | `PROPFIND` Depth 1 | 同上，目录为 `folders/` |
 | `listTombstones()` | `PROPFIND` Depth 1 | 404 视为空列表 |
 | `put(name, json, etag)` | `PUT` | 已知 ETag 时带 `If-Match`；新文件不带条件头 |
 | `get(name)` | `GET` | 返回状态、正文、ETag |
 | `remove(name)` | `DELETE` | 404 视为删除成功，便于重试 |
+| `getFolder/putFolder/removeFolder` | `GET` / `PUT` / `DELETE` | 与书签同名方法语义一致，目录为 `folders/` |
 | `putTombstone(id)` | `PUT` | JSON `{schema,id,purgedAt}` |
 
 - 认证是 `Authorization: Basic base64(user:password)`；日志用 `safeUrl()` 隐藏 URL 中内嵌的凭据。
@@ -67,21 +70,21 @@
 ### 4.1 执行阶段
 
 ```
-test → ensureBase → listItems / listTombstones
-  → 处理远端墓碑
-  → 逐条处理远端 items（缺失则下载；存在则规划）
-  → 上传仅本地存在的书签
-  → 发布本地墓碑并删除远端对应文件
+test → ensureBase → listItems / listFolders / listTombstones
+  → 处理远端墓碑（书签与文件夹同一张墓碑表，uuid 不会撞）
+  → syncCollection(书签)：缺失则下载；存在则规划；仅本地则上传
+  → syncCollection(文件夹)：同一套三阶段循环，经 EntityHooks 注入差异
+  → 发布本地墓碑并删除远端对应文件（items 与 folders 都查）
   → setLastSync + FlowRepository.afterSync() → 中文汇总
 ```
 
-- **远端墓碑**：本地同 id 存在则 `purgeFromRemote()`（删本地、快照、本地墓碑）；本地有同 id 墓碑则移除；
-  远端仍有条目文件则 DELETE。
-- **远端条目**：两端任一有同 id 墓碑就直接跳过，防止复活。本地缺失则 GET + `upsertFromRemote()`。
-  本地存在则按 §4.2 规划。
+- **远端墓碑**：本地同 id 存在书签则 `purgeFromRemote()`、存在文件夹则 `purgeFolderFromRemote()`
+  （删本地、快照、本地墓碑）；本地有同 id 墓碑则移除；远端 `items/` 或 `folders/` 仍有对应文件则 DELETE。
+- **远端条目**：两端任一有同 id 墓碑就直接跳过，防止复活。本地缺失则 GET + `upsertFromRemote()` /
+  `upsertFolderFromRemote()`。本地存在则按 §4.2 规划。
 - **仅本地条目**：远端从未出现且本地不 dirty 时也上传（首次全量）；有远端记录且不 dirty 时跳过。
-- **本地墓碑**：远端墓碑不存在时先 `putTombstone()`，再删远端条目文件，最后删本地墓碑。
-  PUT 或 DELETE 失败会 `markTombstoneFailed()`，保留墓碑并计入失败，下一轮重试。
+- **本地墓碑**：远端墓碑不存在时先 `putTombstone()`，再删远端 `items/` 与 `folders/` 里的对应文件，
+  最后删本地墓碑。PUT 或 DELETE 失败会 `markTombstoneFailed()`，保留墓碑并计入失败，下一轮重试。
 - 汇总 `SyncReport`：`uploaded / downloaded / skipped / deleted / failed / firstFailure`，最后生成
   `上传 x · 下载 y · 跳过 z[ · 删除 n][ · 失败 m（首个原因）]`。
 
@@ -118,10 +121,14 @@ LWW 比较的是 `updatedAt`，`rev` 只用于并发写入检测与记录版本�
 
 ## 5. 合并与冲突
 
-[SyncRecord.ets](../../entry/src/main/ets/core/sync/SyncRecord.ets) 是远端 JSON 的字段白名单（schema 2）：
-id、url、标题/摘要/站点/图标/封面、备注/摘录、标签、`folderPath`、`source`、时间戳、阅读状态、
+[SyncRecord.ets](../../entry/src/main/ets/core/sync/SyncRecord.ets) 是书签远端 JSON 的字段白名单（schema 3）：
+id、url、标题/摘要/站点/图标/封面、备注/摘录、标签、`folderId`、`source`、时间戳、阅读状态、
 星标/归档/删除、rev、deviceId、链接状态。不含 `snapshotPath`、`searchText`、`remoteEtag`、`dirty`。
-解析兼容 schema 1：缺 `folderPath/source` 时按空值/`MANUAL` 读取。
+解析兼容旧 schema：schema 1 无 `folderId/source`，schema 2 无 `folderId`，缺的字段按空值读取并在合并时
+保留本地值（对端升级后自然收敛）。
+
+[FolderSyncRecord.ets](../../entry/src/main/ets/core/sync/FolderSyncRecord.ets) 是文件夹远端 JSON（schema 2）：
+id、parentId、name、position、kind、createdAt、updatedAt、rev；同样不带本地专有列。
 
 `FlowRepository.upsertFromRemote(record, etag)`：
 
@@ -129,15 +136,20 @@ id、url、标题/摘要/站点/图标/封面、备注/摘录、标签、`folder
 2. `normalizeUrl(record.url)` 为空 → 拒绝。
 3. 本地已有记录且 `dirty=true` → 把本地与远端 JSON 写入 `conflict`（`reason='lww-remote-wins'`），
    然后仍以远端版本覆盖（LWW 远端优先）。
-4. 正文快照字段（`snapshotPath/snapshotStatus/snapshotAt`）始终保留本地值；`folderPath/source` 在远端为
-   schema 1 时保留本地值，schema 2 起以远端为准（对端可以显式清空文件夹）；若远端 `linkStatus=0` 而本地
+4. `carryLocalFields()`：正文快照字段（`snapshotPath/snapshotStatus/snapshotAt`）始终保留本地值；
+   `source` 仅当远端 schema < 2、`folderId` 仅当 schema < 3 时保留本地值；若远端 `linkStatus=0` 而本地
    已有检查结果，则保留本地链接状态。
 5. 已有记录 `rev = 本地 rev + 1`，写入 `remoteEtag`，`dirty=false`；新记录直接插入。
+6. 落库后若书签存活且带 `folderId`，`restoreChain()` 复活其文件夹祖先链——否则对端恢复的书签会
+   藏在软删除文件夹下不可见。
+
+`upsertFolderFromRemote(record, etag)`：同样先查墓碑、拒绝空名；同名兄弟落地时
+`dedupedName()` 给后来者改名（两台设备或两次导入可能产生同名不同 id 的兄弟），其余 LWW 覆盖。
+**文件夹不写 conflict 表**——冲突 UI 没有文件夹形态，输掉的改名再改一次即可恢复。
 
 冲突表在同步页可见：显示数量与列表，可展开查看本地/远端 JSON，并选择「恢复本地」或「采用远端」。
 恢复会写回 bookmark、`rev+1`、`dirty=1`，并删除对应 conflict 记录；采用远端时快照三字段保留本地，
-`folderPath/source` 按记录 schema 处理（schema 1 保留本地，schema 2 采用远端）。未做字段级合并，极端同时修改
-仍可能丢失败方字段。
+`source/folderId` 按记录 schema 处理。未做字段级合并，极端同时修改仍可能丢失败方字段。
 
 ## 6. 服务卡片
 

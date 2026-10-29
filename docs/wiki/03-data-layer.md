@@ -11,7 +11,7 @@
 |---|---|
 | 标识与内容 | `id`、`url`、`urlKey`、`title`、`description`、`siteName`、`faviconUrl`、`coverUrl` |
 | 正文与摘录 | `note`、`excerpt`、`snapshotPath`、`snapshotStatus`、`snapshotAt`、`searchText` |
-| 组织与状态 | `tags`、`folderPath`、`source`、`readState`、`starred`、`archived`、`deleted`、`createdAt`、`updatedAt`、`readAt` |
+| 组织与状态 | `tags`、`folderId`（直属文件夹，空串=根）、`source`、`readState`、`starred`、`archived`、`deleted`、`createdAt`、`updatedAt`、`readAt` |
 | 同步与链接 | `rev`、`remoteEtag`、`dirty`、`deviceId`、`linkStatus`、`linkCheckedAt` |
 
 `Bookmark.create()` 生成 UUID、设置 `urlKey=normalizeUrl()`、初始化时间戳与 `PENDING` 快照状态，并调用
@@ -21,6 +21,15 @@ setTags/fillTags` 已处理；标签改名/合并/删除也在同一事务内按
 
 枚举在 [Constants.ets](../../entry/src/main/ets/common/Constants.ets)：`StreamFilter`、`ReadState`、
 `SnapshotStatus`、`BookmarkSource`、`Pane`；`Limits` 定义抓取/快照/标题/描述上限。
+
+### 文件夹模型
+
+[Folder.ets](../../entry/src/main/ets/model/Folder.ets) 是 `@ObservedV2` 的 `Folder`（`id`、`parentId`、
+`name`、`position`、`kind`、`createdAt/updatedAt`、`rev/dirty/remoteEtag/deleted`）与
+`FolderNode`（`children`、`directCount/totalCount`、`path`、`subtreeIds()`）。
+`kind` 是导入时捕获的浏览器语义标记（`''` / `'toolbar'` / `'unfiled'`），HTML 导出时回写为 Netscape
+属性，避免浏览器把我们的根再包一层书签栏。`buildFolderTree()`（FolderDao.ets）由扁平行建树：过滤 `deleted`、悬空子树隐藏、
+检测到环时丢弃环成员中 `updatedAt` 最新者的父边。
 
 ### 正文文档与阅读栈
 
@@ -59,19 +68,23 @@ setTags/fillTags` 已处理；标签改名/合并/删除也在同一事务内按
 
 ## 2. 表结构
 
-[Database.ets](../../entry/src/main/ets/core/db/Database.ets) 创建 `flowpage.db`（security level S1），六张表：
+[Database.ets](../../entry/src/main/ets/core/db/Database.ets) 创建 `flowpage.db`（security level S1），七张表：
 
 | 表 | 关键列 | 说明 |
 |---|---|---|
-| `bookmark` | `id` PK、`url_key` 唯一、`deleted`、`archived`、`read_state`、`starred`、`rev`、`remote_etag`、`dirty` | 主表；`dirty` 默认 1 |
+| `bookmark` | `id` PK、`url_key` 唯一、`folder_id`、`deleted`、`archived`、`read_state`、`starred`、`rev`、`remote_etag`、`dirty` | 主表；`dirty` 默认 1 |
+| `folder` | `id` PK、`parent_id`、`name`、`position`、`kind`、`rev`、`remote_etag`、`dirty`、`deleted` | 文件夹树；软删除，同级重名受限 |
 | `tag` | `id` PK、`name`、`name_key` 唯一 | `name_key` 为小写名，保证大小写不重复 |
 | `bookmark_tag` | `(bookmark_id, tag_id)` PK | 多对多关联 |
-| `conflict` | `id` PK、`bookmark_id`、`local_json`、`remote_json`、`reason`、`created_at` | 下载覆盖本地 dirty 版本时留档 |
+| `conflict` | `id` PK、`bookmark_id`、`local_json`、`remote_json`、`reason`、`created_at` | 下载覆盖本地 dirty 版本时留档（仅书签） |
 | `sync_state` | `key` PK、`value` | 预留；当前同步游标用 preferences（`last_sync`），表未使用 |
-| `tombstone` | `id` PK、`remote_id`、`deleted_at`、`attempts`、`last_error` | 彻底删除后待传播的墓碑 |
+| `tombstone` | `id` PK、`remote_id`、`deleted_at`、`attempts`、`last_error` | 彻底删除后待传播的墓碑；书签与文件夹共用（uuid 不冲突） |
 
-七个索引：`idx_bookmark_url_key`（唯一）、按 `deleted/archived/created_at`、`deleted/starred/created_at`、
-`deleted/read_state/created_at` 的三个列表索引、`idx_bookmark_domain`、`idx_tag_name_key`（唯一）、`idx_bookmark_tag_tag`。
+九个常规索引：`idx_bookmark_url_key`（唯一）、按 `deleted/archived/created_at`、`deleted/starred/created_at`、
+`deleted/read_state/created_at` 的三个列表索引、`idx_bookmark_domain`、`idx_bookmark_folder`、
+`idx_tag_name_key`（唯一）、`idx_bookmark_tag_tag`、`idx_folder_parent`。另有部分唯一索引
+`idx_folder_parent_name`（`folder(parent_id, name) WHERE deleted = 0`）：旧 SQLite 不支持部分索引时静默跳过，
+FolderDao 每条写路径都有应用层同级重名兜底检查，两条防线不可只留其一。
 
 ## 3. DAO 行为
 
@@ -82,6 +95,8 @@ setTags/fillTags` 已处理；标签改名/合并/删除也在同一事务内按
 - `findById/findByUrlKey`：读取单条并加载标签。
 - 状态更新：`setStarred/setArchived/setReadState/setNote/setExcerpt/setTitle/softDelete/restore` 都会
   `updated_at=now`、`rev=rev+1`、`dirty=1`；改文本的三者还会重建 `search_text`。
+  批量版 `setStarredMany/setArchivedMany/setReadStateMany/softDeleteMany/restoreMany` 语义相同；
+  `setFolder(id, folderId)` 只改归属，不动 `position`/`createdAt`。
 - `setRemoteEtagIfUnchanged(id, etag, expectedRev, expectedUpdatedAt)`：条件更新（`rev` 和 `updated_at`
   都匹配）才写 `remote_etag` 并清 `dirty`，返回是否命中。这是上传竞态保护的关键。
 - `clearRemoteEtags()`：切换 WebDAV 服务器时清空所有 ETag，**不清 dirty**。
@@ -92,17 +107,30 @@ setTags/fillTags` 已处理；标签改名/合并/删除也在同一事务内按
 - 墓碑：`addTombstone()` 使用 `INSERT OR REPLACE`；`purge()` 先写墓碑再 `purgeLocal()`；
   `markTombstoneFailed()` 累加 `attempts` 并记录错误；`purgeExpired(days)` 找出软删除超期项逐个 `purge()`。
 
+[FolderDao.ets](../../entry/src/main/ets/core/db/FolderDao.ets) 负责文件夹树的全部写路径：
+
+- `create/findOrCreate(parentId, name, cache?)`：`position` 取父下最大值 +1；`findOrCreate` 供导入批量
+  解析路径，共享缓存让一次导入只按「不同路径」发生 O(1) 次往返。
+- `rename/move`：目标父下出现同名兄弟即拒绝；`move` 还拒绝移入自身或自己的后代
+  （可选 `keepPosition` 让批量移动不改变 `position`）。
+- `cascadeSoftDelete(id)`：连同子孙文件夹与其中书签一起软删除；`restoreChain(id)` 复活书签时顺带
+  复活其文件夹祖先链，复活撞名时 `dedupedName/freeReviveName` 给占名者改名让位。
+- `setFolderEtagIfUnchanged`：与 BookmarkDao 同名的上传竞态条件更新；`listExpiredFolderIds(days)`
+  供过期清理；`clearRemoteEtags()` 与书签版一起在换服务器时调用。
+
 **直接调 DAO 不会刷新 UI，也不会刷新服务卡片。** UI 侧只应通过 `FlowRepository`。
 
 ## 4. 初始化与迁移
 
-`Database.init()` 是进程内单例：第一次调用 `getRdbStore`，依次 `CREATE TABLE IF NOT EXISTS` 六表，
-再对四个后加列（`dirty` / `link_status` / `link_checked_at` / `domain`）执行 `ALTER TABLE ... ADD COLUMN`，
-异常直接忽略（表示列已存在），最后建索引。
+`Database.init()` 是进程内单例：第一次调用 `getRdbStore`，依次 `CREATE TABLE IF NOT EXISTS` 七表，
+再对五个后加列（bookmark 的 `dirty` / `link_status` / `link_checked_at` / `domain` / `folder_id`，
+folder 的 `kind`）执行 `ALTER TABLE ... ADD COLUMN`，异常直接忽略（表示列已存在）；
+随后尝试 `ALTER TABLE bookmark DROP COLUMN folder_path` 清掉被 `folder_id` 取代的旧开发库列
+（新库/旧 SQLite 上抛错均无害），最后建索引。
 因此新增列时必须同时：
 
-1. 改 `Database.SQL_BOOKMARK`（新库直接带上该列）；
-2. 在 `applySchema()` 的 `addColumn()` 列表补一条定义（旧库升级）。
+1. 改 `Database.SQL_BOOKMARK`（或对应表，新库直接带上该列）；
+2. 在 `applySchema()` 的 `addColumn()` / `addFolderColumn()` 列表补一条定义（旧库升级）。
 
 没有 `DB_VERSION`、没有迁移事务、没有回滚。插入/更新、编辑正文、批量导入、清空本机、标签改名/合并/删除
 等写操作已在显式事务内执行（`beginTransaction/commit/rollBack`）；单个状态字段的 `UPDATE` 仍是单条 SQL。
@@ -118,16 +146,19 @@ setTags/fillTags` 已处理；标签改名/合并/删除也在同一事务内按
 |---|---|
 | `saveUrl(rawUrl, title, tags, note, source)` | URL 归一化、按 `url_key` 去重、恢复回收站同 URL、插入、`notify()` |
 | `applyMetadata(id)` | 抓取元数据；标题只在为空或等于域名兜底时覆盖；写正文快照；更新 `snapshotStatus`；`notify()` |
-| `setStarred/setArchived/setRead/setTitle/setNote/setExcerpt/setTags` | 调 DAO 后 `notify()` |
-| `delete/restore/purge/purgeExpired` | 软删除、恢复、彻底删除（含快照文件清理） |
+| `setStarred/setArchived/setRead/setTitle/setNote/setExcerpt/setTags`（含 `*Many` 批量版） | 调 DAO 后 `notify()` |
+| `delete/restore/purge/purgeExpired`（含 `*Many`） | 软删除、恢复（`restoreWithFolderChains` 顺带复活文件夹祖先链）、彻底删除（含快照文件清理） |
+| 文件夹组 `folderTree/createFolder/renameFolder/moveFolder/deleteFolderCascade/setBookmarkFolder/countFolderBookmarks` | 树查询与单点写；`deleteFolderCascade` 走 `FolderDao.cascadeSoftDelete` |
+| 批量组 `batchMove/batchMoveOut/batchDelete/batchDeleteImpact` | 批量面板与拖拽投放共用；DAO 循环后**单次** `notify()` |
 | `importHtml/previewHtml/exportJson/exportHtml` | 导入预览、分批事务导入（可取消、失败清单）与两种导出 |
 | `saveEdits` | 标题/备注/摘录/标签单事务写入，只 `notify()` 一次 |
-| `queryPage` | SQL 过滤 + 排序 + 分页（搜索/标签/回收站） |
+| `queryPage` | SQL 过滤 + 排序 + 分页（搜索/标签/文件夹/回收站；`folderId` 为直属等值过滤） |
 | `listConflicts/resolveConflict/countConflicts` | 冲突记录查询、恢复本地或采用远端 |
-| `purgeExpired/purge/purgeFromRemote/clearAll` | 统一由仓库删除快照文件 |
-| `listAll/get/summary/listTags/...` | 只读查询 |
+| `purgeExpired/purge/purgeFromRemote/clearAll` | 统一由仓库删除快照文件；`purgeExpired` 在书签之后处理过期文件夹（先墓碑后 `purgeLocal`） |
+| `listAll/get/summary/listTags/listAllFolders/...` | 只读查询 |
 | `upsertFromRemote(record, etag)` | 同步下载落库；见 [04](./04-sync-and-services.md#5-合并与冲突) |
-| `setRemoteEtagIfUnchanged/clearRemoteEtags` | 供 `SyncEngine` 使用 |
+| `upsertFolderFromRemote/setFolderEtagIfUnchanged` | 文件夹下载落库（同名兄弟去名合并）与上传竞态回填 |
+| `setRemoteEtagIfUnchanged/clearRemoteEtags` | 供 `SyncEngine` 使用；ETag 清理同时覆盖书签与文件夹 |
 | `afterSync()` | 同步结束后统一 `notify()` |
 
 `notify()` 做两件事：递增 `AppState.refreshTick`；调度卡片快照刷新。卡片刷新用
@@ -137,11 +168,16 @@ setTags/fillTags` 已处理；标签改名/合并/删除也在同一事务内按
 
 - [BookmarkHtmlParser.ets](../../entry/src/main/ets/core/parser/BookmarkHtmlParser.ets) 逐行解析 Netscape 书签：
   `<H3>` 记文件夹、`<DL>` 压栈、`</DL>` 出栈、`<A>` 取 `href` 与标题。**每个 `<A>` 必须与其内容在同一行**
-  （浏览器导出的格式满足）；同一 HTML 内先按归一化 URL 去重。
-- 导入时已有 `url_key` 跳过；`keepFolders=true`（设置页固定传 true）时把 `folderPath` 写入标签；
-  同时保留 `folderPath` 字段。失败 URL 收集到 `ImportResult.failedUrls`。
-- 导出 JSON：`{ schema: 1, exportedAt, items }`，`items` 是完整 Bookmark 对象。
-- 导出 HTML：Netscape 格式，按 `folderPath` 分组，只导出 URL、标题、`ADD_DATE`。
+  （浏览器导出的格式满足）；同一 HTML 内先按归一化 URL 去重；顶层 `<H3>` 的
+  `PERSONAL_TOOLBAR_FOLDER` / `UNFILED_BOOKMARKS_FOLDER` 属性收进 `topMarks`。
+- 导入按层级把路径解析成**真实文件夹链**：`resolveFolderChain()` 逐级 `findOrCreate`
+  （共享缓存，一次导入按不同路径 O(1) 次往返），书签写直属 `folderId`；顶层标记每文件夹只写一次
+  `kind`（幂等，重复导入保持同步静默）。已有 `url_key` 跳过；失败 URL 收集到 `ImportResult.failedUrls`；
+  `ADD_DATE` 回填 `createdAt`。批量 250 条一档，整档失败降级为逐条插入。
+- 导出 JSON：`{ schema: 2, exportedAt, items, folders }`，`items` 是完整 Bookmark 白名单，
+  `folders` 携带 `id/parentId/name/position/kind/createdAt`。
+- 导出 HTML：按文件夹树输出 Netscape 格式（悬空 `folderId` 的书签落根级，保证不丢），
+  `kind` 标记回写为浏览器语义属性；书签按 `createdAt` 升序。
 
 ## 6. URL 归一化与去重
 
@@ -159,7 +195,7 @@ setTags/fillTags` 已处理；标签改名/合并/删除也在同一事务内按
 | 位置 | 内容 |
 |---|---|
 | `filesDir/snapshots/<id>.txt` | 正文结构化快照（`FLOWPAGE-ARTICLE-2`，含块类型/文本/链接区间），上限 200 KiB（按字符截断）；不参与同步 |
-| RDB `flowpage.db` | 书签、标签、冲突、墓碑、同步状态表 |
+| RDB `flowpage.db` | 书签、文件夹、标签、冲突、墓碑、同步状态表 |
 | preferences `flowpage_settings` | `theme_mode`、`reading_size` |
 | preferences `flowpage_sync` | `webdav_config`（含加密密码与服务器指纹）、`last_sync`、旧版兼容键 |
 | preferences `flowpage_card` | 今日/最近卡片快照 |
@@ -169,7 +205,7 @@ setTags/fillTags` 已处理；标签改名/合并/删除也在同一事务内按
 
 ### 生命周期约定
 
-- `clearAll()` 定位为「只清本机」：清 bookmark/tag/bookmark_tag/conflict，并删除 `snapshots/` 下全部
+- `clearAll()` 定位为「只清本机」：清 bookmark/tag/folder/bookmark_tag/conflict，并删除 `snapshots/` 下全部
   `.txt`；云端数据保留，下一次同步会重新下载。tombstone 有意保留，避免清空前已排队的彻底删除
   失去云端传播。设置页文案已注明。
 - `purge()`、`purgeExpired()`、`purgeFromRemote()`、`clearAll()` 都由 `FlowRepository` 删除快照，

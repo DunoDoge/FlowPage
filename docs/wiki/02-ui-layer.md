@@ -8,14 +8,14 @@
 
 1. 注册 `mediaquery` 监听：`(width>=700vp)` → `isWide`，`(width>=1000vp)` → `isLarge`。
 2. 恢复主题偏好并调用 `FlowRepository.init()`；成功后 `ready=true`。
-3. 按断点渲染 `PhoneShell()` 或 `WideShell()`，并叠加 `InboxSheet` 与 toast。
+3. 按断点渲染 `PhoneShell()` 或 `WideShell()`（含文件夹抽屉），并叠加 `InboxSheet` 与 toast。
 4. 监听 `AppState.routeTick`：手机端消费一次路由请求并 push `detail`。
 
 | 宽度 | 布局 |
 |---|---|
 | `< 700vp` | `Navigation` 单栏 + `StreamHome`；详情/标签/同步/设置用 `NavPathStack` 推入 |
-| `700–999vp` | 两栏：列表（340vp）+ 右侧内容 |
-| `>= 1000vp` | 三栏：`SideNav`（240vp）+ 列表（380vp）+ 右侧内容 |
+| `700–999vp` | 两栏：列表（340vp）+ 右侧内容；文件夹经左上角 ☰ 抽屉 |
+| `>= 1000vp` | 三栏：`SideNav`（280vp，`NavigationRail.ets` 导出，内停靠 `FolderPanel`）+ 列表（380vp）+ 右侧内容 |
 
 宽屏右侧由 `AppState.pane` 决定显示 `DetailContent`、`TagsPage`、`SyncPage` 或 `SettingsPage`。
 手机端 `NavDestination.onHidden` 会递增 `streamRefresh`，让从详情/设置返回时首页重新加载——系统返回手势也覆盖。
@@ -29,7 +29,15 @@
 - 数据源是 `FlowRepository.queryPage()`（SQL 过滤/排序/分页，每页 50 条），首次加载同时取汇总与今日计数；
   滚动到底继续 `queryPage(offset)`，`load()` 用世代 token 丢弃过期结果。
 - 筛选：全部 / 未读 / 星标 / 归档 / 回收站；非回收站视图会排除 `deleted`，非归档视图会排除 `archived`。
-- 搜索框 120ms 防抖，在 `Bookmark.searchText` 上做小写子串匹配；与 `AppState.tagFilter` 叠加。
+- 搜索框 120ms 防抖，在 `Bookmark.searchText` 上做小写子串匹配；与 `AppState.tagFilter`、
+  `AppState.folderFilter` 叠加——文件夹过滤是 `BookmarkQuery.folderId` **等值**匹配，
+  只显示该文件夹直属书签，子文件夹内容经其行下钻。
+- **批量模式**：头部「批量」进入 `selectionMode`，可跨列混选书签与文件夹行
+  （选择集在 `AppState.selectedBookmarkIds/selectedFolderIds`）；底部操作条提供
+  加星/归档/已读/移到（`FolderPicker`）/移出一级/删除，统一走
+  `FlowRepository.batchMove/batchMoveOut/batchDelete`，单次 `notify()`；删除前用
+  `batchDeleteImpact()` 汇总「散装书签 + 子树内书签」提示。
+- 行操作入口是行尾「…」锚定面板（桌面右键同入口），不要再加长按菜单或 context menu。
 - 标签筛选来自标签页，首页顶部显示可清除的“标签：xxx”条。
 - 列表项 key 为 `id:rev:updatedAt`，编辑或同步后强制重建对应行。
 - 空态区分“纸还空着 / 没有找到 / 回收站是空的”，空回收站不显示收笺入口。
@@ -38,7 +46,26 @@
 [BookmarkRow.ets](../../entry/src/main/ets/components/BookmarkRow.ets)：未读左侧竖线、两行标题、一行摘要、域名 ·
 相对时间、最多两个标签；右侧星标按钮 32vp 视觉宽度、44×44vp 热区。
 
-## 3. 详情页与阅读模式
+## 3. 文件夹面板与拖拽
+
+[FolderPanel.ets](../../entry/src/main/ets/components/FolderPanel.ets) 是主页的文件夹树（同一组件两种形态）：
+
+- `docked=true` 停靠在 `>= 1000vp` 的 `SideNav` 内（导航项下方，栏宽 280vp）；
+  `< 1000vp` 由主页左上角 ☰ 打开左侧抽屉（宽 84%、最大 320vp，遮罩，点外部/返回关闭）。
+  抽屉顶部复用 `NAV_ITEMS` 渲染主导航。
+- 树行显示文件夹名与计数：**计数含全部子孙书签，点击过滤只列直属书签**；下钻子文件夹内容经其行进入。
+- 行内联新建/重命名（同级重名拒绝）；行尾「…」锚定面板提供重命名/移动/删除（桌面右键同入口）。
+- 展开集合、滚动位置与抽屉开合存在 `AppState`，手机端详情往返不重置；
+  拖拽会话进行中暂缓刷新，会话结束补一次。
+- **长按拖拽只改归属**（`bookmark.folder_id` / `folder.parent_id`），**不写** `position` / `createdAt`：
+  拖拽系统只认字符串负载，`FolderDragSession.PAYLOAD`（`flowpage/folder-drag`）是标记，
+  混合选择实际存在 `FolderDragSession.shared` 单例；
+  投放目标（树行或根区）先经 [FolderDropRules.ets](../../entry/src/main/ets/common/FolderDropRules.ets)
+  的纯函数 `planFolderDrop()` 规划——已在目标内 / 移入自身或后代 / 目标同级重名为跳过或拒绝，
+  其余交 `FlowRepository.batchMove()` 提交，与批量移动共用一条路径。
+- 无拖拽路径（菜单「移动到」）复用 [FolderPicker.ets](../../entry/src/main/ets/components/FolderPicker.ets)。
+
+## 4. 详情页与阅读模式
 
 [DetailContent.ets](../../entry/src/main/ets/components/DetailContent.ets) 同时用于手机（`compact=true`）和
 宽屏右侧（`compact=false`），内容最大宽度 680vp。
@@ -81,7 +108,7 @@
 - 删除是软删除并提示 30 天；已在回收站时提供“恢复 / 彻底删除”，彻底删除会先确认并删除快照。
 - “查链接”调用 `MetadataService.checkLink()`，写入 `link_status`（1 可用 / 2 可能失效 / 0 未判断）。
 
-## 4. 收笺与分享
+## 5. 收笺与分享
 
 - [InboxSheet.ets](../../entry/src/main/ets/components/InboxSheet.ets)：首页底部面板，可预填深链带来的 URL；
   校验 `isValidHttpUrl()` 后保存，来源固定为 `BookmarkSource.MANUAL`；新建成功才异步抓元数据。
@@ -91,7 +118,7 @@
   遍历 records，标题取首个非空 `title`，URL 从 `content` 或 `uri` 中用 `extractFirstUrl()` 提取。
   `module.json5` 只声明 `general.hyperlink` 与 `general.text` 两种 UTD。
 
-## 5. 标签、同步、设置
+## 6. 标签、同步、设置
 
 - [TagsPage.ets](../../entry/src/main/ets/pages/TagsPage.ets)：按使用次数倒序列出标签；点标签写入
   `AppState.tagFilter` 并返回首页；支持重命名、删除（只解除关联）、合并到另一标签。
@@ -100,9 +127,11 @@
   目前只是“下一阶段接入”的说明文字。
 - [SettingsPage.ets](../../entry/src/main/ets/pages/SettingsPage.ets)：主题、数据统计、导入浏览器 HTML、
   导出 JSON/HTML、清空数据、关于。导入文件通过 `DocumentViewPicker` 选择 `.html/.htm`。
-  导入时保留文件夹为标签；导出 HTML 使用 Netscape 书签格式。
+  导入按 HTML 层级创建/复用真实文件夹链（同名路径合并，浏览器工具栏/未归档标记写入 `folder.kind`）；
+  导出 HTML 按文件夹树输出 Netscape 格式，并把 `kind` 标记回写为
+  `PERSONAL_TOOLBAR_FOLDER` / `UNFILED_BOOKMARKS_FOLDER`，避免浏览器二次嵌套自己的书签栏。
 
-## 6. 主题与视觉约定
+## 7. 主题与视觉约定
 
 - 颜色全部来自 `$r('app.color.*')`：`paper` / `surface` / `surface_alt` / `ink` / `ink_secondary` /
   `ink_tertiary` / `line` / `line_strong` / `inverse_ink` / `danger` / `overlay` / `highlight`。
@@ -113,7 +142,7 @@
 - 当前没有 i18n 层：页面文案是内联中文；只有应用名/Ability/卡片描述在 `string.json`。
   新增文案沿用现有内联方式，不要引入只改一半的资源体系。
 
-## 7. 服务卡片
+## 8. 服务卡片
 
 [TodayCard.ets](../../entry/src/main/ets/widget/pages/TodayCard.ets)（2×2）和
 [RecentCard.ets](../../entry/src/main/ets/widget/pages/RecentCard.ets)（2×4）位于 `widget/pages/`，

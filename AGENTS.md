@@ -67,7 +67,7 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   `notify()`（`setLinkStatus` 与同步内部方法除外）。直接调 `BookmarkDao` 不会刷新 UI，也不会推送卡片。
   新写入口必须走 Repository，或在末尾补 `notify()`。
 - `AppState.openBookmark()` 写 `routeTick` 触发手机端 push `detail`；`onContinue` 只携带当前 `selectedId`。
-- 宽屏三栏仅 `width>=1000vp` 显示 `SideNav`；`700–999vp` 为两栏；手机为 `Navigation` 栈。
+- 宽屏三栏仅 `width>=1000vp` 显示 `SideNav`（文件为 `components/NavigationRail.ets`）；`700–999vp` 为两栏；手机为 `Navigation` 栈。
 - 卡片在独立进程读取 preferences，`CardSnapshot.open()` 必须先
   `removePreferencesFromCacheSync`，否则读到旧快照。`FlowRepository.notify()` 已做“写快照 + 推送”串行合并。
 - 所有 URL 先经 `normalizeUrl()`：补 `https://`、小写 host、去 fragment、去跟踪参数、query 排序；`url_key`

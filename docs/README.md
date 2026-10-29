@@ -11,6 +11,7 @@
 |---|---|---|
 | 现在时 · 速查 | [AGENTS.md](../AGENTS.md) | 随代码同步更新；易变数字（用例数、耗时、内存）只在此处 |
 | 现在时 · 详解 | [wiki/](./wiki/README.md) | 随代码同步更新；引用而非复制易变数字 |
+| 现在时 · 契约 | `openspec/specs/` | 能力规格（系统持久行为契约），随变更归档同步 |
 | 过去时 · 决策 | [adr/](./adr/README.md) | append-only；推翻用 Superseded 链，不改写 |
 | 过去时 · 日志 | [quality/](./quality/)、[records/](./records/) | append-only；仅补时效标注与失效路径 |
 | 将来时 · 变更 | `openspec/changes/` | proposal → 实施 → 归档至 `archive/` |

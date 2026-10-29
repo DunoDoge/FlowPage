@@ -19,8 +19,8 @@
         ▲
 ┌──────────────────────────────────────────────────────────────┐
 │ ② 表现层  pages + components + widget                         │
-│   Index · SharePage · StreamHome · DetailContent · InboxSheet │
-│   TagsPage · SyncPage · SettingsPage · TodayCard/RecentCard   │
+│   Index · SharePage · StreamHome · DetailContent · FolderPanel │
+│   ReadingShell · InboxSheet · NavigationRail(SideNav) · Cards  │
 └──────────────────────────────────────────────────────────────┘
         ▲ 只通过 FlowRepository
 ┌──────────────────────────────────────────────────────────────┐
@@ -78,7 +78,9 @@ common/（AppState、URL/日期工具、枚举）与 model/（数据模型）
 | `selectedId` / `pane` | 当前详情与宽屏面板 |
 | `routeTick` / `routeId` | 请求手机端打开详情；`consumeRoute()` 保证只消费一次 |
 | `refreshTick` | 数据版本号；`StreamHome`、`TagsPage`、`SyncPage`、`SettingsPage` 用 `@Monitor` 监听后重载 |
-| `tagFilter` | 标签页到首页的筛选条件 |
+| `tagFilter` / `folderFilter` | 标签页 / 文件夹树到首页的筛选条件（文件夹为**直属**书签等值过滤） |
+| `folderDrawerOpen` / `folderPanelExpandedIds` / `folderPanelScrollY` | 文件夹抽屉开合、树展开集合与滚动位置（手机详情往返不重置） |
+| `selectionMode` / `selectedBookmarkIds` / `selectedFolderIds` | 跨列批量多选；`FolderDragSession.shared` 单例承载拖拽会话的混合选择 |
 | `inboxUrl` / `showInbox` | 收笺面板开关与预填 URL |
 | `readingOpen` / `readingTick` / `readingBackTick` / `readingCanGoBack` | `ReadingShell` 覆盖层开关、重新播种、返回请求与根部判断 |
 | `toastText` | 2.4 秒后自动清除的轻提示 |
@@ -122,7 +124,9 @@ InboxSheet / SharePage
 ### 4.3 同步
 
 `SyncPage` 保存配置后调用 `SyncEngine.sync()`。引擎以本地 RDB 为事实源，与远端
-`FlowPage/v1/items/*.json`、`FlowPage/v1/tombstones/*.json` 对账；详细算法见
+`FlowPage/v1/items/*.json`、`FlowPage/v1/folders/*.json`、`FlowPage/v1/tombstones/*.json`
+三个集合对账：书签与文件夹共用同一套三阶段同步循环（`EntityHooks` 注入），墓碑表亦为
+两类实体共用（uuid 不冲突）；详细算法见
 [04-sync-and-services.md](./04-sync-and-services.md)。
 
 ### 4.4 服务卡片

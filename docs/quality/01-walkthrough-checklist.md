@@ -110,7 +110,8 @@
 
 > 自动化：安装 `entry-ohosTest-signed.hap` 后执行
 > `hdc shell aa test -b com.dunodoge.flowpage -m entry_test -s unittest OpenHarmonyTestRunner -s timeout 900000`，
-> 12 个套件、130 个用例，覆盖 ETag/规划/同步引擎、标签 dirty 与 `search_text` 重建、快照生命周期、冲突恢复、
+> 套件与用例数以 [AGENTS.md](../../AGENTS.md) 项目快照为准（本文写作时为 12 套件 / 130 用例，未含文件夹套件），
+> 覆盖 ETag/规划/同步引擎、标签 dirty 与 `search_text` 重建、快照生命周期、冲突恢复、
 > 阅读状态、摘要口径、SQL 分页排序、LIKE 转义、卡片序列化、导入预览/取消/失败清单与冷/热查询基准、
 > 阅读搜索纯函数等价与索引偏移。
 
