@@ -79,6 +79,11 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   临时链接页不写 RDB/快照/`flowpage_reader`，只保留在 `ReadingEntry` 内存栈中。正文链接点击 → 原生抓取
   （`ReaderPageLoader`）→ 临时阅读页；非文档链接 → 内置 `Web`。浏览器「阅读」用
   `runJavaScriptExt('document.body.innerHTML')` 提取实时 DOM，同样复用 `ArticleExtractor`。
+- **沉浸式系统栏**：组件安全区方案（`expandSafeArea` 绘制延伸，非 `setWindowLayoutFullScreen`），系统栏区域
+  透出容器自身背景、内容留在安全区自动避让。已扩展 6 处屏幕边缘背景容器：`Index` 根 Stack、`FolderDrawer`
+  抽屉列与遮罩、`InboxSheet` 遮罩与面板（面板仅 BOTTOM）、`SharePage` 根。新增屏幕边缘容器（弹层/抽屉/独立
+  窗口页）背景色 ≠ 根 paper 时需自行附加 `expandSafeArea`；paper 同色界面由根 Stack 单点覆盖，勿逐页加。
+  `bindContentCover` 保持 `enableSafeArea: true`（阅读层零改动承接）。能力规格见 `openspec/specs/immersive-ui/`。
 - 删除语义：软删除 `deleted=1` 保留 30 天；彻底删除/过期清理会写 `tombstone`，同步先传墓碑再删远端文件。
   墓碑是“不复活”的唯一保障，任何清理路径都不能跳过 `addTombstone`。
 - 上传竞态：PUT 前记录 `rev + updatedAt`，成功后仅当仍匹配才回填 ETag 并清 `dirty`；不匹配说明同步期间
