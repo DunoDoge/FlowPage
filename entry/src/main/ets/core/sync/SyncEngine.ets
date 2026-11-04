@@ -20,6 +20,9 @@ export class SyncReport {
   failed: number = 0;
   firstFailure: string = '';
   message: string = '';
+  // True when sustained throttling ended the round early; unprocessed items
+  // keep their pending state and resume on the next sync.
+  throttled: boolean = false;
 }
 
 // Minimal per-entity view the generic loop needs; both Bookmark and Folder map onto it.
@@ -91,14 +94,31 @@ export class SyncEngine {
     }
   }
 
+  // Transport-level throttle circuit verdict; unwinds loops without counting
+  // the unprocessed remainder as failures.
+  private static isThrottleAbort(error: Object): boolean {
+    return error instanceof Error && error.message === 'THROTTLED_ABORT';
+  }
+
+  private static rethrowThrottleAbort(error: Object): void {
+    if (error instanceof Error && error.message === 'THROTTLED_ABORT') {
+      throw error;
+    }
+  }
+
+  private static rethrowAsError(error: Object): void {
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error('SYNC_PHASE_FAILED');
+  }
+
   private static async uploadOne(
     hooks: EntityHooks,
     row: SyncEntityRow,
     remoteEtag: string,
     report: SyncReport
   ): Promise<void> {
-    const expectedRev = row.rev;
-    const expectedUpdatedAt = row.updatedAt;
     try {
       const json = await hooks.serialize(row.id);
       if (json === undefined) {
@@ -112,6 +132,7 @@ export class SyncEngine {
         report.skipped = report.skipped + 1;
       }
     } catch (error) {
+      SyncEngine.rethrowThrottleAbort(error);
       SyncEngine.fail(report, error);
     }
   }
@@ -155,6 +176,7 @@ export class SyncEngine {
             report.skipped = report.skipped + 1;
           }
         } catch (error) {
+          SyncEngine.rethrowThrottleAbort(error);
           SyncEngine.fail(report, error);
         }
         continue;
@@ -196,6 +218,7 @@ export class SyncEngine {
           await SyncEngine.uploadOne(hooks, local, remote.etag, report);
         }
       } catch (error) {
+        SyncEngine.rethrowThrottleAbort(error);
         SyncEngine.fail(report, error);
       }
     }
@@ -275,75 +298,49 @@ export class SyncEngine {
     }
 
     // Tombstone reconciliation covers both entity types; uuids cannot collide.
-    for (let i = 0; i < remoteTombstoneIds.length; i++) {
-      const id = remoteTombstoneIds[i];
-      if (id.length === 0) {
-        continue;
-      }
-      if (localMap.get(id) !== undefined) {
-        await repo.purgeFromRemote(id);
-      } else if (localFolderMap.get(id) !== undefined) {
-        await repo.purgeFolderFromRemote(id);
-      } else if (tombstoneMap.get(id) !== undefined) {
-        await repo.removeTombstone(id);
-      }
-      if (remoteMap.get(id) !== undefined) {
-        try {
-          await transport.remove(id);
-          report.deleted = report.deleted + 1;
-        } catch (error) {
-          SyncEngine.fail(report, error);
+    let throttled = false;
+    try {
+      for (let i = 0; i < remoteTombstoneIds.length; i++) {
+        const id = remoteTombstoneIds[i];
+        if (id.length === 0) {
+          continue;
+        }
+        if (localMap.get(id) !== undefined) {
+          await repo.purgeFromRemote(id);
+        } else if (localFolderMap.get(id) !== undefined) {
+          await repo.purgeFolderFromRemote(id);
+        } else if (tombstoneMap.get(id) !== undefined) {
+          await repo.removeTombstone(id);
+        }
+        if (remoteMap.get(id) !== undefined) {
+          try {
+            await transport.remove(id);
+            report.deleted = report.deleted + 1;
+          } catch (error) {
+            SyncEngine.rethrowThrottleAbort(error);
+            SyncEngine.fail(report, error);
+          }
+        }
+        if (remoteFolderMap.get(id) !== undefined) {
+          try {
+            await transport.removeFolder(id);
+            report.deleted = report.deleted + 1;
+          } catch (error) {
+            SyncEngine.rethrowThrottleAbort(error);
+            SyncEngine.fail(report, error);
+          }
         }
       }
-      if (remoteFolderMap.get(id) !== undefined) {
-        try {
-          await transport.removeFolder(id);
-          report.deleted = report.deleted + 1;
-        } catch (error) {
-          SyncEngine.fail(report, error);
-        }
+    } catch (error) {
+      if (!SyncEngine.isThrottleAbort(error)) {
+        SyncEngine.rethrowAsError(error);
       }
+      throttled = true;
     }
 
-    const bookmarkHooks = new EntityHooks();
-    bookmarkHooks.fetchRemote = (): Promise<RemoteItem[]> => {
-      return Promise.resolve(remoteItems);
-    };
-    bookmarkHooks.fetchLocal = (): Promise<SyncEntityRow[]> => {
-      const rows: SyncEntityRow[] = [];
-      for (let i = 0; i < localAll.length; i++) {
-        rows.push(bookmarkRow(localAll[i]));
-      }
-      return Promise.resolve(rows);
-    };
-    bookmarkHooks.fetchBody = async (name: string): Promise<string> => {
-      const response = await transport.get(name);
-      if (response.status !== 200) {
-        throw new Error(`GET_${response.status}`);
-      }
-      return response.body;
-    };
-    bookmarkHooks.updatedAtOf = (body: string): number => {
-      return SyncRecord.parse(body).updatedAt;
-    };
-    bookmarkHooks.applyRemote = async (body: string, etag: string): Promise<boolean> => {
-      return repo.upsertFromRemote(SyncRecord.parse(body), etag);
-    };
-    bookmarkHooks.serialize = async (id: string): Promise<string | undefined> => {
-      const bookmark = await repo.get(id);
-      if (bookmark === undefined) {
-        return undefined;
-      }
-      return SyncRecord.fromBookmark(bookmark).toJson();
-    };
-    bookmarkHooks.put = (name: string, json: string, etag: string): Promise<string> => {
-      return transport.put(name, json, etag);
-    };
-    bookmarkHooks.adoptEtag = (row: SyncEntityRow, etag: string): Promise<boolean> => {
-      return repo.setRemoteEtagIfUnchanged(row.id, etag, row.rev, row.updatedAt);
-    };
-    await SyncEngine.syncCollection(bookmarkHooks, remoteTombstoneSet, localTombstoneSet, report);
-
+    // Folders upload before bookmarks: under provider rate limiting a large
+    // bookmark backlog would otherwise starve the (much smaller) folder phase
+    // every round, keeping the remote folders directory empty.
     const folderHooks = new EntityHooks();
     folderHooks.fetchRemote = (): Promise<RemoteItem[]> => {
       return Promise.resolve(remoteFolders);
@@ -381,47 +378,116 @@ export class SyncEngine {
     folderHooks.adoptEtag = (row: SyncEntityRow, etag: string): Promise<boolean> => {
       return repo.setFolderEtagIfUnchanged(row.id, etag, row.rev, row.updatedAt);
     };
-    await SyncEngine.syncCollection(folderHooks, remoteTombstoneSet, localTombstoneSet, report);
+    try {
+      await SyncEngine.syncCollection(folderHooks, remoteTombstoneSet, localTombstoneSet, report);
+    } catch (error) {
+      if (!SyncEngine.isThrottleAbort(error)) {
+        SyncEngine.rethrowAsError(error);
+      }
+      throttled = true;
+    }
 
-    for (let i = 0; i < tombstones.length; i++) {
-      const tombstone = tombstones[i];
-      const id = tombstone.remoteName();
-      if (remoteTombstoneSet.has(id)) {
-        continue;
-      }
+    if (!throttled) {
+      const bookmarkHooks = new EntityHooks();
+      bookmarkHooks.fetchRemote = (): Promise<RemoteItem[]> => {
+        return Promise.resolve(remoteItems);
+      };
+      bookmarkHooks.fetchLocal = (): Promise<SyncEntityRow[]> => {
+        const rows: SyncEntityRow[] = [];
+        for (let i = 0; i < localAll.length; i++) {
+          rows.push(bookmarkRow(localAll[i]));
+        }
+        return Promise.resolve(rows);
+      };
+      bookmarkHooks.fetchBody = async (name: string): Promise<string> => {
+        const response = await transport.get(name);
+        if (response.status !== 200) {
+          throw new Error(`GET_${response.status}`);
+        }
+        return response.body;
+      };
+      bookmarkHooks.updatedAtOf = (body: string): number => {
+        return SyncRecord.parse(body).updatedAt;
+      };
+      bookmarkHooks.applyRemote = async (body: string, etag: string): Promise<boolean> => {
+        return repo.upsertFromRemote(SyncRecord.parse(body), etag);
+      };
+      bookmarkHooks.serialize = async (id: string): Promise<string | undefined> => {
+        const bookmark = await repo.get(id);
+        if (bookmark === undefined) {
+          return undefined;
+        }
+        return SyncRecord.fromBookmark(bookmark).toJson();
+      };
+      bookmarkHooks.put = (name: string, json: string, etag: string): Promise<string> => {
+        return transport.put(name, json, etag);
+      };
+      bookmarkHooks.adoptEtag = (row: SyncEntityRow, etag: string): Promise<boolean> => {
+        return repo.setRemoteEtagIfUnchanged(row.id, etag, row.rev, row.updatedAt);
+      };
       try {
-        await transport.putTombstone(id);
+        await SyncEngine.syncCollection(bookmarkHooks, remoteTombstoneSet, localTombstoneSet, report);
       } catch (error) {
-        await repo.markTombstoneFailed(tombstone.id, SyncErrorText.describeError(error));
-        SyncEngine.fail(report, error);
-        continue;
-      }
-      if (remoteMap.get(id) !== undefined) {
-        try {
-          await transport.remove(id);
-          report.deleted = report.deleted + 1;
-        } catch (error) {
-          await repo.markTombstoneFailed(tombstone.id, SyncErrorText.describeError(error));
-          SyncEngine.fail(report, error);
-          continue;
+        if (!SyncEngine.isThrottleAbort(error)) {
+          SyncEngine.rethrowAsError(error);
         }
+        throttled = true;
       }
-      if (remoteFolderMap.get(id) !== undefined) {
-        try {
-          await transport.removeFolder(id);
-          report.deleted = report.deleted + 1;
-        } catch (error) {
-          await repo.markTombstoneFailed(tombstone.id, SyncErrorText.describeError(error));
-          SyncEngine.fail(report, error);
-          continue;
+    }
+
+    if (!throttled) {
+      try {
+        for (let i = 0; i < tombstones.length; i++) {
+          const tombstone = tombstones[i];
+          const id = tombstone.remoteName();
+          if (remoteTombstoneSet.has(id)) {
+            continue;
+          }
+          try {
+            await transport.putTombstone(id);
+          } catch (error) {
+            SyncEngine.rethrowThrottleAbort(error);
+            await repo.markTombstoneFailed(tombstone.id, SyncErrorText.describeError(error));
+            SyncEngine.fail(report, error);
+            continue;
+          }
+          if (remoteMap.get(id) !== undefined) {
+            try {
+              await transport.remove(id);
+              report.deleted = report.deleted + 1;
+            } catch (error) {
+              SyncEngine.rethrowThrottleAbort(error);
+              await repo.markTombstoneFailed(tombstone.id, SyncErrorText.describeError(error));
+              SyncEngine.fail(report, error);
+              continue;
+            }
+          }
+          if (remoteFolderMap.get(id) !== undefined) {
+            try {
+              await transport.removeFolder(id);
+              report.deleted = report.deleted + 1;
+            } catch (error) {
+              SyncEngine.rethrowThrottleAbort(error);
+              await repo.markTombstoneFailed(tombstone.id, SyncErrorText.describeError(error));
+              SyncEngine.fail(report, error);
+              continue;
+            }
+          }
+          await repo.removeTombstone(tombstone.id);
         }
+      } catch (error) {
+        if (!SyncEngine.isThrottleAbort(error)) {
+          SyncEngine.rethrowAsError(error);
+        }
+        throttled = true;
       }
-      await repo.removeTombstone(tombstone.id);
     }
 
     SyncConfigStore.setLastSync(context, Date.now());
     repo.afterSync();
-    report.message = `上传 ${report.uploaded} · 下载 ${report.downloaded} · 跳过 ${report.skipped}`;
+    report.throttled = throttled;
+    report.message = throttled ? '服务器限流，本轮提前结束，剩余条目下次同步继续 · ' : '';
+    report.message += `上传 ${report.uploaded} · 下载 ${report.downloaded} · 跳过 ${report.skipped}`;
     if (report.deleted > 0) {
       report.message += ` · 删除 ${report.deleted}`;
     }

@@ -9,7 +9,9 @@ import { Folder } from '../../../main/ets/model/Folder';
 import { SyncRecord } from '../../../main/ets/core/sync/SyncRecord';
 import { FolderSyncRecord } from '../../../main/ets/core/sync/FolderSyncRecord';
 import { SyncEngine, SyncReport } from '../../../main/ets/core/sync/SyncEngine';
+import { SyncErrorText } from '../../../main/ets/core/sync/SyncErrorText';
 import { SyncTransport } from '../../../main/ets/core/sync/SyncTransport';
+import { WebDavRetryPlanner } from '../../../main/ets/core/sync/WebDavRetryPlanner';
 import { RemoteItem, WebDavResponse } from '../../../main/ets/core/sync/WebDavTypes';
 import { FlowRepository } from '../../../main/ets/repository/FlowRepository';
 import { BookmarkSource } from '../../../main/ets/common/Constants';
@@ -24,6 +26,17 @@ class FakeTransport implements SyncTransport {
   folderFiles: Map<string, StoredFile> = new Map<string, StoredFile>();
   tombstones: Set<string> = new Set<string>();
   failDelete: boolean = false;
+  // Ordered upload calls across collections: 'folder:<id>' / 'item:<id>'.
+  callLog: string[] = [];
+  // Emulates the retrying real transport: each put() serves up to this many
+  // PUT_429 responses internally before succeeding; a 3rd consecutive 429
+  // surfaces as a thrown PUT_429, matching WebDavRetryPlanner.MAX_ATTEMPTS.
+  transientPutFailures: number = 0;
+  // Emulates the transport throttle circuit: after this many successful
+  // puts, every further request throws THROTTLED_ABORT (hardThrottled).
+  // -1 disables the circuit.
+  abortAfterPuts: number = -1;
+  private putsDone: number = 0;
   private seq: number = 0;
 
   private nextEtag(): string {
@@ -36,6 +49,10 @@ class FakeTransport implements SyncTransport {
   }
 
   async ensureBase(): Promise<void> {
+  }
+
+  private throttled(): boolean {
+    return this.abortAfterPuts >= 0 && this.putsDone >= this.abortAfterPuts;
   }
 
   private async listMap(map: Map<string, StoredFile>): Promise<RemoteItem[]> {
@@ -66,6 +83,9 @@ class FakeTransport implements SyncTransport {
   }
 
   async putTombstone(id: string): Promise<void> {
+    if (this.throttled()) {
+      throw new Error('THROTTLED_ABORT');
+    }
     this.tombstones.add(id);
   }
 
@@ -83,10 +103,16 @@ class FakeTransport implements SyncTransport {
   }
 
   async get(name: string): Promise<WebDavResponse> {
+    if (this.throttled()) {
+      throw new Error('THROTTLED_ABORT');
+    }
     return this.readMap(this.files, name);
   }
 
   async getFolder(name: string): Promise<WebDavResponse> {
+    if (this.throttled()) {
+      throw new Error('THROTTLED_ABORT');
+    }
     return this.readMap(this.folderFiles, name);
   }
 
@@ -98,12 +124,39 @@ class FakeTransport implements SyncTransport {
     return stored.etag;
   }
 
+  // Shared upload gate + bookkeeping so item and folder puts cannot drift.
+  private trackPut(kind: string, name: string): void {
+    if (this.throttled()) {
+      throw new Error('THROTTLED_ABORT');
+    }
+    this.callLog.push(`${kind}:${name}`);
+  }
+
+  private async commitPut(map: Map<string, StoredFile>, name: string, json: string): Promise<string> {
+    const etag = await this.writeMap(map, name, json);
+    this.putsDone = this.putsDone + 1;
+    return etag;
+  }
+
   async put(name: string, json: string, etag: string): Promise<string> {
-    return this.writeMap(this.files, name, json);
+    this.trackPut('item', name);
+    let attempts = 0;
+    while (true) {
+      attempts = attempts + 1;
+      if (this.transientPutFailures > 0) {
+        this.transientPutFailures = this.transientPutFailures - 1;
+        if (attempts >= WebDavRetryPlanner.MAX_ATTEMPTS) {
+          throw new Error('PUT_429');
+        }
+        continue;
+      }
+      return this.commitPut(this.files, name, json);
+    }
   }
 
   async putFolder(name: string, json: string, etag: string): Promise<string> {
-    return this.writeMap(this.folderFiles, name, json);
+    this.trackPut('folder', name);
+    return this.commitPut(this.folderFiles, name, json);
   }
 
   private async removeFromMap(map: Map<string, StoredFile>, name: string): Promise<void> {
@@ -673,6 +726,140 @@ export default function syncEngineTest() {
       expect(tree.length).assertEqual(1);
       expect(tree[0].folder.name).assertEqual('迟到文件夹');
       expect(tree[0].totalCount).assertEqual(1);
+    });
+
+    it('folderUploadsRunBeforeBookmarkUploads', 0, async () => {
+      if (context === undefined) {
+        expect(context === undefined).assertFalse();
+        return;
+      }
+      const repo = FlowRepository.get();
+      const folder = await repo.createFolder('', '顺序');
+      expect(folder === undefined).assertFalse();
+      if (folder === undefined) {
+        return;
+      }
+      const dao = new BookmarkDao();
+      for (let i = 0; i < 2; i++) {
+        const bookmark = Bookmark.create(
+          `https://example.com/order-${i}`,
+          `书签${i}`,
+          BookmarkSource.MANUAL
+        );
+        bookmark.folderId = folder.id;
+        await dao.insert(bookmark);
+      }
+
+      const transport = new FakeTransport();
+      const report = await SyncEngine.run(transport, context);
+      expect(report.uploaded).assertEqual(3);
+      expect(report.failed).assertEqual(0);
+      expect(transport.callLog.length).assertEqual(3);
+      expect(transport.callLog[0]).assertEqual(`folder:${folder.id}`);
+    });
+
+    it('retriedPutSuccessCountsAsUploaded', 0, async () => {
+      if (context === undefined) {
+        expect(context === undefined).assertFalse();
+        return;
+      }
+      const dao = new BookmarkDao();
+      const bookmark = Bookmark.create('https://example.com/retry-ok', '重试成功', BookmarkSource.MANUAL);
+      await dao.insert(bookmark);
+      const transport = new FakeTransport();
+      transport.transientPutFailures = 2;
+      const report = await SyncEngine.run(transport, context);
+      expect(report.uploaded).assertEqual(1);
+      expect(report.failed).assertEqual(0);
+      const loaded = await dao.findById(bookmark.id);
+      expect(loaded === undefined).assertFalse();
+      if (loaded !== undefined) {
+        expect(loaded.dirty).assertFalse();
+        expect(loaded.remoteEtag.length > 0).assertTrue();
+      }
+    });
+
+    it('exhaustedRetriesKeepDirtyUntilNextRun', 0, async () => {
+      if (context === undefined) {
+        expect(context === undefined).assertFalse();
+        return;
+      }
+      const dao = new BookmarkDao();
+      const bookmark = Bookmark.create('https://example.com/retry-exhausted', '重试耗尽', BookmarkSource.MANUAL);
+      await dao.insert(bookmark);
+      const transport = new FakeTransport();
+      transport.transientPutFailures = 3;
+      const first = await SyncEngine.run(transport, context);
+      expect(first.uploaded).assertEqual(0);
+      expect(first.failed).assertEqual(1);
+      expect(first.firstFailure).assertEqual(SyncErrorText.describe('PUT_429'));
+      expect(SyncErrorText.describe('PUT_429').indexOf('请求过于频繁（429）') >= 0).assertTrue();
+      let loaded = await dao.findById(bookmark.id);
+      expect(loaded === undefined).assertFalse();
+      if (loaded !== undefined) {
+        expect(loaded.dirty).assertTrue();
+      }
+
+      transport.transientPutFailures = 0;
+      const second = await SyncEngine.run(transport, context);
+      expect(second.uploaded).assertEqual(1);
+      expect(second.failed).assertEqual(0);
+      loaded = await dao.findById(bookmark.id);
+      expect(loaded === undefined).assertFalse();
+      if (loaded !== undefined) {
+        expect(loaded.dirty).assertFalse();
+      }
+    });
+
+    it('throttleAbortEndsRoundAndResumesNextRun', 0, async () => {
+      if (context === undefined) {
+        expect(context === undefined).assertFalse();
+        return;
+      }
+      const dao = new BookmarkDao();
+      const ids: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        const bookmark = Bookmark.create(
+          `https://example.com/abort-${i}`,
+          `早停${i}`,
+          BookmarkSource.MANUAL
+        );
+        await dao.insert(bookmark);
+        ids.push(bookmark.id);
+      }
+
+      const transport = new FakeTransport();
+      transport.abortAfterPuts = 1;
+      const first = await SyncEngine.run(transport, context);
+      expect(first.throttled).assertTrue();
+      expect(first.uploaded).assertEqual(1);
+      expect(first.failed).assertEqual(0);
+      expect(first.message.indexOf('提前结束') >= 0).assertTrue();
+
+      let dirtyCount = 0;
+      for (let i = 0; i < ids.length; i++) {
+        const loaded = await dao.findById(ids[i]);
+        expect(loaded === undefined).assertFalse();
+        if (loaded !== undefined && loaded.dirty) {
+          dirtyCount = dirtyCount + 1;
+        }
+      }
+      expect(dirtyCount).assertEqual(2);
+
+      // Same transport keeps round 1's remote files; only the throttle
+      // circuit resets, exactly like a real server that has recovered.
+      transport.abortAfterPuts = -1;
+      const second = await SyncEngine.run(transport, context);
+      expect(second.throttled).assertFalse();
+      expect(second.uploaded).assertEqual(2);
+      expect(second.failed).assertEqual(0);
+      for (let i = 0; i < ids.length; i++) {
+        const loaded = await dao.findById(ids[i]);
+        expect(loaded === undefined).assertFalse();
+        if (loaded !== undefined) {
+          expect(loaded.dirty).assertFalse();
+        }
+      }
     });
   });
 }

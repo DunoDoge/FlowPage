@@ -1,4 +1,5 @@
 import webDavXmlTest from './WebDavXml.test'
+import webDavRetryTest from './WebDavRetry.test'
 import syncPlannerTest from './SyncPlanner.test'
 import syncEngineTest from './SyncEngine.test'
 import syncStoreTest from './SyncStore.test'
@@ -16,6 +17,7 @@ import folderHomeTest from './FolderHome.test'
 
 export default function testsuite() {
   webDavXmlTest()
+  webDavRetryTest()
   syncPlannerTest()
   syncEngineTest()
   syncStoreTest()

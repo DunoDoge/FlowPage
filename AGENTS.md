@@ -13,7 +13,7 @@
 | 状态 | `@ObservedV2` + `@Trace` + `@ComponentV2` + `@Local` / `@Param` / `@Event` / `@Monitor` |
 | 数据 | RDB `flowpage.db`（7 表 + 9 索引）、preferences、`filesDir/snapshots/*.txt` |
 | 同步 | WebDAV（Basic Auth），ETag 增量 + LWW；书签/文件夹/墓碑三类实体；无分布式 KV、无账号体系 |
-| 测试 | `@ohos/hypium`，`entry/src/ohosTest` 15 个套件 / 185 个用例，仅设备端 |
+| 测试 | `@ohos/hypium`，`entry/src/ohosTest` 16 个套件 / 202 个用例，仅设备端 |
 
 ## 构建与验证（顺序有讲究）
 
@@ -88,6 +88,16 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   墓碑是“不复活”的唯一保障，任何清理路径都不能跳过 `addTombstone`。
 - 上传竞态：PUT 前记录 `rev + updatedAt`，成功后仅当仍匹配才回填 ETag 并清 `dirty`；不匹配说明同步期间
   又被编辑，必须保持 dirty。
+- 传输层瞬时失败重试（`WebDavTransport.request()` 内，覆盖所有动词）：429/502/503/504 与 `NET_*` 网络错误
+  按 500/1000/2000ms 退避、最多 3 次尝试；`Retry-After` 优先但 >5s 快速失败；401/403/404/409/412 等不重试
+  （LWW/If-Match 快速失败语义不变）。决策纯逻辑在 `WebDavRetryPlanner`，重试成功不计入报告失败数。
+- 限流自适应节流与熔断早停（`WebDavPacer`，同文件）：重试耗尽于 429/503 才激活全局节流（基础 1000ms，
+  `Retry-After` 融合上限 30s，成功 ×0.8 衰减、<100ms 退出）；节流下连续 3 次耗尽 → 传输层置熔断、后续请求
+  立即抛 `THROTTLED_ABORT`，引擎跳过剩余阶段并报「服务器限流，本轮提前结束，剩余条目下次同步继续」，
+  未处理条目不计失败（`SyncReport.throttled`）。坚果云等 ~1 req/s 服务商的批量上传/下载靠节流磨过、
+  硬限流窗口靠早停兜底；正常服务器零额外等待。
+- 同轮集合同步顺序：文件夹先于书签（`SyncEngine.run()`），避免服务商限流时大批书签上传耗尽配额导致
+  文件夹阶段持续饥饿（云端 folders 目录空）。
 - 数据库没有版本号/事务迁移框架：建表用 `CREATE TABLE IF NOT EXISTS`，加列同时改 `Database.SQL_BOOKMARK`
   并在 `Database.applySchema()` 的 `addColumn()` 列表补一条吞异常的 `ALTER TABLE`（现有 `dirty` /
   `link_status` / `link_checked_at` / `domain` 即此模式）；`SyncStoreTest` 用旧表结构验证迁移幂等。

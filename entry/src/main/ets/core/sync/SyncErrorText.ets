@@ -1,3 +1,5 @@
+const RATE_LIMIT_TEXT: string = '请求过于频繁（429），已自动重试仍失败，请稍后再同步。';
+
 export class SyncErrorText {
   static describe(message: string): string {
     if (message === 'AUTH_401') {
@@ -17,6 +19,9 @@ export class SyncErrorText {
     }
     if (message === 'BUSY') {
       return '上一次同步还没结束。';
+    }
+    if (message === 'THROTTLED_ABORT') {
+      return '服务器限流，本轮提前结束，剩余条目下次同步继续。';
     }
     if (message === 'PARENT_MISSING') {
       return '远端父目录不存在。';
@@ -75,6 +80,9 @@ export class SyncErrorText {
     if (status === 412) {
       return '远端已有更新的版本（412），请重试同步。';
     }
+    if (status === 429) {
+      return RATE_LIMIT_TEXT;
+    }
     return `远端拒绝写入（HTTP ${status}）。`;
   }
 
@@ -85,6 +93,9 @@ export class SyncErrorText {
     if (status === 409) {
       return '远端目录状态异常（409），暂时无法删除。';
     }
+    if (status === 429) {
+      return RATE_LIMIT_TEXT;
+    }
     return `远端删除失败（HTTP ${status}）。`;
   }
 
@@ -94,6 +105,9 @@ export class SyncErrorText {
     }
     if (status === 401 || status === 403) {
       return `远端拒绝读取（${status}），请检查目录权限。`;
+    }
+    if (status === 429) {
+      return RATE_LIMIT_TEXT;
     }
     return `读取远端条目失败（HTTP ${status}）。`;
   }

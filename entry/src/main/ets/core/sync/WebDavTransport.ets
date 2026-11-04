@@ -4,6 +4,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { platformFailure } from '../../common/PlatformError';
 import { RemoteItem, WebDavResponse } from './WebDavTypes';
 import { SyncTransport } from './SyncTransport';
+import { WebDavPacer, WebDavRetryPlanner } from './WebDavRetryPlanner';
 import { WebDavXml } from './WebDavXml';
 
 const PROPFIND_BODY: string =
@@ -20,6 +21,11 @@ export class WebDavConfig {
 export class WebDavTransport implements SyncTransport {
   private config: WebDavConfig;
   private auth: string;
+  // Run-scoped throttle state: pacer spaces requests after an exhausted
+  // 429/503; hardThrottled makes every further request fail fast so the
+  // engine can end the round (remaining work resumes next sync).
+  private pacer: WebDavPacer = new WebDavPacer();
+  private hardThrottled: boolean = false;
 
   constructor(config: WebDavConfig) {
     this.config = config;
@@ -54,58 +60,131 @@ export class WebDavTransport implements SyncTransport {
     return '';
   }
 
+  private static sleep(ms: number): Promise<void> {
+    return new Promise<void>((resolve: () => void) => {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  // Transient failures (429/502/503/504, network errors) retry with backoff
+  // before surfacing; every other status returns to the caller unchanged so
+  // LWW/If-Match and auth handling keep their fail-fast semantics.
   private async request(
     method: string,
     path: string,
     body: string,
     extra: Record<string, string>
   ): Promise<WebDavResponse> {
-    const request = http.createHttp();
+    if (this.hardThrottled) {
+      throw new Error('THROTTLED_ABORT');
+    }
     const url = `${this.base()}/${path}`;
-    try {
-      const headers: Record<string, string> = {
-        'Authorization': this.auth,
-        'Accept': '*/*'
-      };
-      const extraKeys = Object.keys(extra);
-      for (let i = 0; i < extraKeys.length; i++) {
-        headers[extraKeys[i]] = extra[extraKeys[i]];
+    const headers: Record<string, string> = {
+      'Authorization': this.auth,
+      'Accept': '*/*'
+    };
+    const extraKeys = Object.keys(extra);
+    for (let i = 0; i < extraKeys.length; i++) {
+      headers[extraKeys[i]] = extra[extraKeys[i]];
+    }
+    const methodValue: http.RequestMethod = method as http.RequestMethod;
+    const options: http.HttpRequestOptions = {
+      method: methodValue,
+      header: headers,
+      connectTimeout: 10000,
+      readTimeout: 30000,
+      expectDataType: http.HttpDataType.STRING,
+      usingCache: false
+    };
+    if (body.length > 0) {
+      options.extraData = body;
+    }
+    let attempts = 0;
+    while (true) {
+      if (this.pacer.pacing()) {
+        await WebDavTransport.sleep(this.pacer.currentDelayMs());
       }
-      const methodValue: http.RequestMethod = method as http.RequestMethod;
-      const options: http.HttpRequestOptions = {
-        method: methodValue,
-        header: headers,
-        connectTimeout: 10000,
-        readTimeout: 30000,
-        expectDataType: http.HttpDataType.STRING,
-        usingCache: false
-      };
-      if (body.length > 0) {
-        options.extraData = body;
+      attempts = attempts + 1;
+      const request = http.createHttp();
+      try {
+        hilog.info(0x0000, 'flowpage', 'webdav request %{public}s %{public}s', method, this.safeUrl(url));
+        const response = await request.request(url, options);
+        hilog.info(0x0000, 'flowpage', 'webdav response %{public}d %{public}s', response.responseCode, method);
+        const result = new WebDavResponse();
+        result.status = response.responseCode;
+        const payload = response.result;
+        result.body = typeof payload === 'string' ? payload : '';
+        const responseHeaders = response.header as Record<string, string>;
+        result.etag = this.headerValue(responseHeaders, 'etag');
+        if (WebDavRetryPlanner.isRetryableStatus(result.status)) {
+          const retryAfterMs = WebDavRetryPlanner.retryAfterMillis(
+            Number(this.headerValue(responseHeaders, 'retry-after'))
+          );
+          const decision = WebDavRetryPlanner.planForStatus(attempts, result.status, retryAfterMs);
+          if (decision.retry) {
+            hilog.info(
+              0x0000,
+              'flowpage',
+              'webdav retry %{public}s status=%{public}d attempt=%{public}d delay=%{public}dms',
+              method,
+              result.status,
+              attempts,
+              decision.delayMs
+            );
+            await WebDavTransport.sleep(decision.delayMs);
+            continue;
+          }
+          hilog.warn(
+            0x0000,
+            'flowpage',
+            'webdav retries exhausted %{public}s status=%{public}d attempt=%{public}d',
+            method,
+            result.status,
+            attempts
+          );
+          if (this.pacer.recordThrottled(result.status, retryAfterMs)) {
+            this.hardThrottled = true;
+            hilog.warn(0x0000, 'flowpage', 'webdav throttle circuit open, aborting sync round');
+            throw new Error('THROTTLED_ABORT');
+          }
+          hilog.info(0x0000, 'flowpage', 'webdav pacing on, delay=%{public}dms', this.pacer.currentDelayMs());
+          return result;
+        }
+        if (result.status < 400) {
+          this.pacer.recordSuccess();
+        }
+        return result;
+      } catch (error) {
+        if (error instanceof Error && error.message === 'THROTTLED_ABORT') {
+          throw error;
+        }
+        const code = platformFailure(error).code;
+        const decision = WebDavRetryPlanner.planForNetworkError(attempts);
+        if (decision.retry) {
+          hilog.info(
+            0x0000,
+            'flowpage',
+            'webdav retry %{public}s net code=%{public}d attempt=%{public}d delay=%{public}dms',
+            method,
+            code,
+            attempts,
+            decision.delayMs
+          );
+          await WebDavTransport.sleep(decision.delayMs);
+          continue;
+        }
+        hilog.error(
+          0x0000,
+          'flowpage',
+          'webdav error %{public}s %{public}s code=%{public}d',
+          method,
+          this.safeUrl(url),
+          code
+        );
+        throw new Error(`NET_${code}`);
+      } finally {
+        request.destroy();
       }
-      hilog.info(0x0000, 'flowpage', 'webdav request %{public}s %{public}s', method, this.safeUrl(url));
-      const response = await request.request(url, options);
-      hilog.info(0x0000, 'flowpage', 'webdav response %{public}d %{public}s', response.responseCode, method);
-      const result = new WebDavResponse();
-      result.status = response.responseCode;
-      const payload = response.result;
-      result.body = typeof payload === 'string' ? payload : '';
-      const responseHeaders = response.header as Record<string, string>;
-      result.etag = this.headerValue(responseHeaders, 'etag');
-      return result;
-    } catch (error) {
-      const code = platformFailure(error).code;
-      hilog.error(
-        0x0000,
-        'flowpage',
-        'webdav error %{public}s %{public}s code=%{public}d',
-        method,
-        this.safeUrl(url),
-        code
-      );
-      throw new Error(`NET_${code}`);
-    } finally {
-      request.destroy();
     }
   }
 
