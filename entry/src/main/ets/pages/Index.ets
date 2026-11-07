@@ -10,11 +10,21 @@ import { StreamHome } from '../components/StreamHome';
 import { FolderPanel } from '../components/FolderPanel';
 import { DetailContent } from '../components/DetailContent';
 import { InboxSheet } from '../components/InboxSheet';
-import { SideNav, NAV_ITEMS, NavItem } from '../components/NavigationRail';
+import { SideNav } from '../components/NavigationRail';
+import { NavList } from '../components/NavList';
 import { TagsPage } from './TagsPage';
 import { SyncPage } from './SyncPage';
 import { SettingsPage } from './SettingsPage';
 import { ReadingShell } from '../components/ReadingShell';
+
+// Drawer / docked rail motion. The drawer stays mounted and animates by
+// transform so open and close are symmetric; the panel leads and its
+// content follows after a short delay on open.
+const DRAWER_DURATION: number = 240;
+const DRAWER_SLIDE: number = 340;
+const DRAWER_CONTENT_DURATION: number = 200;
+const DRAWER_CONTENT_DELAY: number = 100;
+const RAIL_WIDTH: number = 280;
 
 @Entry
 @ComponentV2
@@ -129,10 +139,13 @@ struct Index {
       this.appState.goPane(pane);
       return;
     }
-    if (pane === Pane.DETAIL) {
-      return;
+    // Drawer pane switching is top-level navigation: reset the stack so
+    // system back always lands on the home stream instead of the previous
+    // pane (same clear-then-push contract as showDetailOnPhone).
+    this.navStack.clear(false);
+    if (pane !== Pane.DETAIL) {
+      this.navStack.pushPathByName(pane, '');
     }
-    this.navStack.pushPathByName(pane, '');
   }
 
   private closeDetail(): void {
@@ -157,7 +170,7 @@ struct Index {
         this.PhoneShell()
       }
 
-      if (!this.isLarge && this.appState.folderDrawerOpen) {
+      if (!this.isLarge) {
         this.FolderDrawer()
       }
 
@@ -206,50 +219,53 @@ struct Index {
 
   @Builder
   FolderDrawer() {
-    Row() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      // Full-bleed scrim sits under the sliding panel so the dimmed area is
+      // visible across the whole screen while the panel travels.
+      Row()
+        .width('100%')
+        .height('100%')
+        .backgroundColor($r('app.color.overlay'))
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+        .hitTestBehavior(this.appState.folderDrawerOpen && !this.dragSession.active
+          ? HitTestMode.Default
+          : HitTestMode.None)
+        .opacity(this.appState.folderDrawerOpen ? 1 : 0)
+        .animation({ duration: DRAWER_DURATION, curve: Curve.FastOutSlowIn })
+        .onClick(() => {
+          this.appState.folderDrawerOpen = false;
+        })
+
       Column() {
-        // Same nav set as the docked rail; label text keeps the home ☰ inset
-        // (20vp) so the drawer visually continues from the button.
-        ForEach(NAV_ITEMS, (item: NavItem) => {
-          Row() {
-            if (this.appState.pane === item.pane) {
-              Row()
-                .width(2)
-                .height(20)
-                .backgroundColor($r('app.color.ink'))
-                .borderRadius(1)
+        Column() {
+          // Same nav block as the docked rail (NavList owns the top inset so
+          // the drawer no longer hugs the safe-area edge).
+          NavList({
+            onSelect: (pane: string) => {
+              this.appState.folderDrawerOpen = false;
+              this.openPane(pane);
             }
-            Text(item.label)
-              .fontSize(14)
-              .fontColor(this.appState.pane === item.pane ? $r('app.color.ink') : $r('app.color.ink_secondary'))
-              .fontWeight(this.appState.pane === item.pane ? FontWeight.Medium : FontWeight.Normal)
-              .margin({ left: 20 })
+          })
+
+          Column() {
+            FolderPanel({
+              isWide: false,
+              docked: false
+            })
           }
           .width('100%')
-          .height(44)
-          .alignItems(VerticalAlign.Center)
-          .accessibilityText(`打开${item.label}`)
-          .focusable(true)
-          .onClick(() => {
-            this.appState.folderDrawerOpen = false;
-            this.openPane(item.pane);
-          })
-        }, (item: NavItem) => item.pane)
-
-        Divider()
-          .strokeWidth(1)
-          .color($r('app.color.line'))
-          .margin({ top: 4, bottom: 4 })
-
-        Column() {
-          FolderPanel({
-            isWide: false,
-            docked: false
-          })
+          .layoutWeight(1)
+          .clip(false)
         }
         .width('100%')
-        .layoutWeight(1)
-        .clip(false)
+        .height('100%')
+        .translate({ x: this.appState.folderDrawerOpen ? 0 : -16 })
+        .opacity(this.appState.folderDrawerOpen ? 1 : 0)
+        .animation({
+          duration: DRAWER_CONTENT_DURATION,
+          delay: this.appState.folderDrawerOpen ? DRAWER_CONTENT_DELAY : 0,
+          curve: Curve.FastOutSlowIn
+        })
       }
       .width('84%')
       .constraintSize({ maxWidth: 320 })
@@ -258,19 +274,15 @@ struct Index {
       .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
       .border({ width: { right: 1 }, color: $r('app.color.line') })
       .clip(false)
-
-      Row()
-        .layoutWeight(1)
-        .height('100%')
-        .backgroundColor($r('app.color.overlay'))
-        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-        .hitTestBehavior(this.dragSession.active ? HitTestMode.None : HitTestMode.Default)
-        .onClick(() => {
-          this.appState.folderDrawerOpen = false;
-        })
+      .enabled(this.appState.folderDrawerOpen)
+      .hitTestBehavior(this.appState.folderDrawerOpen ? HitTestMode.Default : HitTestMode.None)
+      .translate({ x: this.appState.folderDrawerOpen ? 0 : -DRAWER_SLIDE })
+      .animation({ duration: DRAWER_DURATION, curve: Curve.FastOutSlowIn })
     }
     .width('100%')
     .height('100%')
+    .hitTestBehavior(this.appState.folderDrawerOpen ? HitTestMode.Default : HitTestMode.None)
+    .accessibilityLevel(this.appState.folderDrawerOpen ? 'auto' : 'no-hide-descendants')
   }
 
   @Builder
@@ -278,14 +290,24 @@ struct Index {
     Row() {
       if (this.isLarge) {
         Column() {
-          SideNav({
-            onSelect: (pane: string) => {
-              this.appState.goPane(pane);
-            }
-          })
+          Column() {
+            SideNav({
+              onSelect: (pane: string) => {
+                this.appState.goPane(pane);
+              }
+            })
+          }
+          .width(RAIL_WIDTH)
+          .height('100%')
+          .translate({ x: this.appState.sideNavOpen ? 0 : -RAIL_WIDTH })
+          .animation({ duration: DRAWER_DURATION, curve: Curve.FastOutSlowIn })
         }
-        .width(280)
+        .width(this.appState.sideNavOpen ? RAIL_WIDTH : 0)
         .height('100%')
+        .clip(true)
+        .enabled(this.appState.sideNavOpen)
+        .accessibilityLevel(this.appState.sideNavOpen ? 'auto' : 'no-hide-descendants')
+        .animation({ duration: DRAWER_DURATION, curve: Curve.FastOutSlowIn })
       }
 
       Column() {
@@ -295,7 +317,6 @@ struct Index {
           refreshKey: this.streamRefresh,
           onOpen: (id: string) => this.openDetail(id),
           onCompose: () => this.appState.openInbox(''),
-          onComposeWithUrl: (url: string) => this.appState.openInbox(url),
           onOpenPane: (pane: string) => this.openPane(pane)
         })
       }
@@ -333,7 +354,6 @@ struct Index {
         refreshKey: this.streamRefresh,
         onOpen: (id: string) => this.openDetail(id),
         onCompose: () => this.appState.openInbox(''),
-        onComposeWithUrl: (url: string) => this.appState.openInbox(url),
         onOpenPane: (pane: string) => this.openPane(pane)
       })
     }
@@ -365,6 +385,7 @@ struct Index {
       NavDestination() {
         TagsPage({
           showBack: true,
+          showMenu: !this.isLarge,
           onBack: () => {
             this.navStack.pop();
           }
@@ -379,6 +400,7 @@ struct Index {
       NavDestination() {
         SyncPage({
           showBack: true,
+          showMenu: !this.isLarge,
           onBack: () => {
             this.navStack.pop();
           }
@@ -393,6 +415,7 @@ struct Index {
       NavDestination() {
         SettingsPage({
           showBack: true,
+          showMenu: !this.isLarge,
           onBack: () => {
             this.navStack.pop();
           }

@@ -2,11 +2,12 @@ import { TagCount } from '../model/Tag';
 import { AppState } from '../common/AppState';
 import { Pane } from '../common/Constants';
 import { FlowRepository } from '../repository/FlowRepository';
-import { KeyCode } from '@kit.InputKit';
+import { PageHeader } from '../components/PageHeader';
 
 @ComponentV2
 export struct TagsPage {
   @Param showBack: boolean = false;
+  @Param showMenu: boolean = false;
   @Event onBack: () => void = () => {};
   @Local appState: AppState = AppState.shared;
   @Local tags: TagCount[] = [];
@@ -101,45 +102,32 @@ export struct TagsPage {
     });
   }
 
+  @Builder
+  HeaderTrailing() {
+    Text(`${this.tags.length} 个标签`)
+      .fontSize(12)
+      .fontColor($r('app.color.ink_tertiary'))
+  }
+
   build() {
     Column() {
-      Row() {
-        if (this.showBack) {
-          Text('返回')
-            .fontSize(13)
-            .fontColor($r('app.color.ink_secondary'))
-            .height(44)
-            .padding({ right: 12 })
-            .accessibilityText('返回')
-            .focusable(true)
-            .onClick(() => this.onBack())
-            .onKeyEvent((event: KeyEvent) => {
-              if (event.type === KeyType.Down &&
-                (event.keyCode === KeyCode.KEYCODE_ENTER || event.keyCode === KeyCode.KEYCODE_SPACE)) {
-                this.onBack();
-              }
-            })
+      PageHeader({
+        showBack: this.showBack,
+        showMenu: this.showMenu,
+        onBack: () => {
+          this.onBack();
+        },
+        trailing: () => {
+          this.HeaderTrailing()
         }
-        Blank()
-        Text(`${this.tags.length} 个标签`)
-          .fontSize(12)
-          .fontColor($r('app.color.ink_tertiary'))
-      }
-      .width('100%')
-      .padding({ left: 20, right: 20, top: 12 })
+      })
 
       Text('标签')
         .fontSize(34)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.ink'))
         .width('100%')
-        .padding({ left: 20, right: 20, top: 14 })
-
-      Text('文件夹记得来处，标签记下想法。')
-        .fontSize(12)
-        .fontColor($r('app.color.ink_tertiary'))
-        .width('100%')
-        .padding({ left: 20, right: 20, top: 6, bottom: 18 })
+        .padding({ left: 20, right: 20, top: 14, bottom: 18 })
 
       if (this.editingId.length > 0) {
         this.Editor()

@@ -68,6 +68,22 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   新写入口必须走 Repository，或在末尾补 `notify()`。
 - `AppState.openBookmark()` 写 `routeTick` 触发手机端 push `detail`；`onContinue` 只携带当前 `selectedId`。
 - 宽屏三栏仅 `width>=1000vp` 显示 `SideNav`（文件为 `components/NavigationRail.ets`）；`700–999vp` 为两栏；手机为 `Navigation` 栈。
+- 品牌文字只由主页头部承载（34fp「流笺」+ 副题），全断点同一结构；侧边栏 `SideNav` 无品牌块、
+  与抽屉同用 `components/NavList.ets`（唯一渲染源：`NAV_ITEMS` 四项导航、`TOP_INSET=26` 顶部留白、
+  20vp 标签缩进、导航行按压阴影反馈）。☰ 为 `SymbolGlyph` 图标按状态映射：停靠栏展开显
+  `sys.symbol.open_sidebar`、收起显 `sys.symbol.close_sidebar`（≥1000vp 切换 `AppState.sideNavOpen`，
+  默认展开，收起时拖拽书签自动展开），<1000vp 恒 `open_sidebar` 并打开左侧抽屉（面板常驻挂载，
+  `translate`/`opacity` 隐式动画：面板 240ms 推入、内容延迟 100ms 跟进，收起不延迟；≥1000vp 停靠栏
+  按宽度过渡推挤内容区）。勿改回条件渲染 + `transition`（实测面板本体不动画）；关闭态须逐层 gate：
+  `HitTestMode.None` 只关自身不关子节点，根/全屏遮罩各设 None、面板另加 `enabled(false)`，
+  根再 `accessibilityLevel('no-hide-descendants')`，否则透明遮罩会吞掉 ☰ 点击；
+  无障碍标签按动作（展开/收起/打开侧边栏）。
+- 手机导航栈子页（tags/sync/settings）页头用 `components/PageHeader.ets`（可选返回 + 可选 ☰，
+  ☰ 仅窄屏渲染，detail 页不接入）；经抽屉切 pane 走 `openPane()` 清栈再进（流笺=`clear`，
+  其余=`clear`+push，与 `showDetailOnPhone` 同构），系统返回必回主页流。能力规格见
+  `openspec/specs/navigation-shell/`、`openspec/specs/interaction-feedback/`。
+- 主页头部不放统计条/批量/粘贴：「批量」在排序行行尾（`BatchButton`，全断点同位）；剪贴板粘贴入口在收笺
+  面板（`InboxSheet`）URL 行内的 `PasteButton`（安全组件，点击即获读取授权，读出首个 URL 回填输入框）。
 - 卡片在独立进程读取 preferences，`CardSnapshot.open()` 必须先
   `removePreferencesFromCacheSync`，否则读到旧快照。`FlowRepository.notify()` 已做“写快照 + 推送”串行合并。
 - 所有 URL 先经 `normalizeUrl()`：补 `https://`、小写 host、去 fragment、去跟踪参数、query 排序；`url_key`
@@ -97,7 +113,7 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   未处理条目不计失败（`SyncReport.throttled`）。坚果云等 ~1 req/s 服务商的批量上传/下载靠节流磨过、
   硬限流窗口靠早停兜底；正常服务器零额外等待。
 - 同轮集合同步顺序：文件夹先于书签（`SyncEngine.run()`），避免服务商限流时大批书签上传耗尽配额导致
-  文件夹阶段持续饥饿（云端 folders 目录空）。
+  文件夹阶段持续饥饿（云端 folders 目录空）。能力规格见 `openspec/specs/webdav-sync/`。
 - 数据库没有版本号/事务迁移框架：建表用 `CREATE TABLE IF NOT EXISTS`，加列同时改 `Database.SQL_BOOKMARK`
   并在 `Database.applySchema()` 的 `addColumn()` 列表补一条吞异常的 `ALTER TABLE`（现有 `dirty` /
   `link_status` / `link_checked_at` / `domain` 即此模式）；`SyncStoreTest` 用旧表结构验证迁移幂等。
@@ -138,21 +154,32 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   `common/PlatformError.ets`），新增业务代码不要再用 `as`。
 - 主 UI 统一 V2 装饰器；**只有** `entry/src/main/ets/widget/pages/` 的桌面卡片使用 V1
   `@Component` + `@LocalStorageProp`（FormKit 约束），不要混用。
-- 文件夹管理属主页：`FolderPanel` 挂在最左页面栏——≥1000vp 停靠在 `SideNav` 内（导航项下方，栏宽 280vp），
-  <1000vp 由主页左上角按钮打开左侧抽屉（遮罩，点外部/返回关闭）。抽屉顶部复用 `NAV_ITEMS` 渲染主导航
-  （含流笺），主页头部不放 标签/同步/设置，只剩 ☰（窄屏）与「批量」。树的展开集合、滚动位置与抽屉开合在
+- 文件夹管理属主页：`FolderPanel` 挂在最左页面栏——≥1000vp 停靠在 `SideNav` 内（导航项下方，栏宽 280vp，
+  ☰ 可收起/展开，默认展开）；<1000vp 由 ☰ 打开左侧抽屉（遮罩，点外部/返回关闭，主页头部与
+  tags/sync/settings 页头均可开）。抽屉主导航同源 `NavList`，主页头部不放 标签/同步/设置，只剩 ☰。
+  树的展开集合、滚动位置与抽屉开合在
   `AppState`；跨列多选与拖拽会话也走 `AppState` / `FolderDragSession`，投放由侧栏直接提交。点树行把流过滤到
   该文件夹的**直属书签**（`BookmarkQuery.folderId` 等值，子文件夹内容经其行下钻；树行计数仍含全部子孙）。
   长按拖拽只改归属（`bookmark.folder_id` / `folder.parent_id`），**不写** `position` / `createdAt`；
   批量与拖拽共用 `FlowRepository.batchMove/batchMoveOut/batchDelete`，单次 `notify()`。行操作入口是行尾
-  「…」锚定面板（桌面右键同入口），不要再加长按菜单或 context menu；无拖拽路径经 `FolderPicker`。
+  「…」`sys.symbol.more` 锚定面板（桌面右键同入口），不要再加长按菜单或 context menu；无拖拽路径经 `FolderPicker`。
 - 动态文案不要只放在带参 `@Builder` 里：实测 `ReadingShell` 的「网页/阅读」标签在模式切换后会残留旧值，
   改为直接内联 `Text` 或提升到 `@Local` 状态；其余带参 builder 的静态文案不受影响。
+- 图标一律 `SymbolGlyph` + `sys.symbol.*`（☰=`open_sidebar`/`close_sidebar`、加=`plus`、更多=`more`、
+  关=`xmark`；资源名以 SDK `ets-loader/sysResource.js` symbol 组为准，勿凭记忆猜名）。`SymbolGlyph.fontColor`
+  只收 `Array<ResourceColor>`（`[$r(...)]`）。hover/按压反馈用 `onHover((isHover: boolean)=>…)` 与
+  `onTouch` Down/Up/Cancel 驱动 `@Local`，条件切换 `surface_alt` 背景（`hdsEffect.pressShadow`
+  在非 HDS 组件实测不渲染）；Button 先 `stateEffect(false)`；**不要用 `stateStyles`**
+  （plain 组件按压背景残留、hover 误触发），API 26 也无 `hoverable` 属性。小按钮热区用 `responseRegion`
+  扩到 44vp，别放大可视尺寸。
 - 内置 Web 复用 `INTERNET` 权限，不要新增权限；`target=_blank`/`window.open` 用
   `javaScriptOnDocumentStart` 中和，ArkTS 不能给 `ControllerHandler.setWebController` 传 `null`。
   离开浏览模式后 Web 会卸载，调用 `WebviewController` 前必须检查 `webMounted`。
 - 颜色一律 `$r('app.color.*')`（`resources/base|dark/element/color.json` 成对维护）。当前没有 i18n 层，
   页面文案是内联中文，只有应用名/Ability 标签在 `string.json`。
+- 界面文案禁未实现功能预告占位与定位/抒情式 slogan（侧边栏 footer、关于 tagline、页面副题已删），
+  数据行为/隐私告知与空状态引导保留；设置页版本号运行时读包配置 `versionName`，不要硬编码。
+  规格见 `openspec/specs/ui-copy/`。
 - 日志 `hilog`，domain `0x0000`，TAG `'flowpage'`。
 - 注释只写代码表达不出的约束，英文，与该文件现有风格一致。
 - 提交遵循现有 Conventional Commits（`fix(sync): ...`、`docs: ...`）；**未经明确要求不要 commit/push**。

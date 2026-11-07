@@ -24,6 +24,8 @@ export class AppState {
   // Home folder tree session state, hoisted so a phone detail round-trip
   // (NavDestination cover) or a wide rebuild never resets expansion.
   @Trace folderDrawerOpen: boolean = false;
+  // >=1000vp: the docked rail is expanded by default; the home ☰ toggles it.
+  @Trace sideNavOpen: boolean = true;
   @Trace folderPanelExpandedIds: string[] = [];
   folderPanelScrollY: number = 0;
   // The tree lives in the left rail while bookmark rows live in the stream

@@ -1,11 +1,9 @@
-import { pasteboard } from '@kit.BasicServicesKit';
 import { KeyCode } from '@kit.InputKit';
 import { Bookmark } from '../model/Bookmark';
 import { BookmarkQuery, BookmarkSort } from '../model/BookmarkQuery';
 import { AppState } from '../common/AppState';
 import { ReadState, StreamFilter } from '../common/Constants';
 import { FolderDragSession } from '../common/FolderDragSession';
-import { extractFirstUrl } from '../common/UrlUtil';
 import { LibrarySummary, BatchImpact, BatchOutcome, FlowRepository } from '../repository/FlowRepository';
 import { BookmarkRow } from './BookmarkRow';
 import { FolderPicker } from './FolderPicker';
@@ -32,7 +30,6 @@ export struct StreamHome {
   @Param refreshKey: number = 0;
   @Event onOpen: (id: string) => void = (id: string) => {};
   @Event onCompose: () => void = () => {};
-  @Event onComposeWithUrl: (url: string) => void = (url: string) => {};
   @Event onOpenPane: (pane: string) => void = (pane: string) => {};
 
   @Local appState: AppState = AppState.shared;
@@ -52,6 +49,23 @@ export struct StreamHome {
   @Local showActions: boolean = false;
   @Local bookmarkMoveOpen: boolean = false;
   @Local dragSession: FolderDragSession = FolderDragSession.shared;
+  // Manual hover/press feedback: stateStyles sticks on plain text/glyph
+  // components after the pointer leaves, so each interactive surface tracks
+  // its own transient state here.
+  @Local hamburgerHovered: boolean = false;
+  @Local hamburgerPressed: boolean = false;
+  @Local filterHovered: number = -1;
+  @Local filterPressed: number = -1;
+  @Local sortHovered: number = -1;
+  @Local sortPressed: number = -1;
+  @Local batchHovered: boolean = false;
+  @Local batchPressed: boolean = false;
+  @Local composeHovered: boolean = false;
+  @Local composePressed: boolean = false;
+  @Local clearTagHovered: boolean = false;
+  @Local clearTagPressed: boolean = false;
+  @Local clearFolderHovered: boolean = false;
+  @Local clearFolderPressed: boolean = false;
   private batchBusy: boolean = false;
   private searchTimer: number = -1;
   private loadGeneration: number = 0;
@@ -489,6 +503,9 @@ export struct StreamHome {
     this.showActions = false;
     if (!this.folderDocked) {
       this.appState.folderDrawerOpen = true;
+    } else {
+      // A collapsed docked rail leaves the drag with no drop target.
+      this.appState.sideNavOpen = true;
     }
   }
 
@@ -672,50 +689,114 @@ export struct StreamHome {
     return `${this.summary.total} 条 · 今天收下 ${this.todayCount} 条`;
   }
 
-  private async readClipboard(): Promise<void> {
-    try {
-      const data = await pasteboard.getSystemPasteboard().getData();
-      const text = data.getPrimaryText();
-      const found = extractFirstUrl(text);
-      if (found.length === 0) {
-        AppState.shared.toast('剪贴板里没有链接');
-        return;
-      }
-      this.onComposeWithUrl(found);
-    } catch (error) {
-      AppState.shared.toast('读不到剪贴板');
+  @Builder
+  ComposeButton() {
+    Row({ space: 4 }) {
+      SymbolGlyph($r('sys.symbol.plus'))
+        .fontSize(16)
+        .fontColor([$r('app.color.inverse_ink')])
+      Text('收笺')
+        .fontSize(13)
+        .fontColor($r('app.color.inverse_ink'))
     }
+    .backgroundColor($r('app.color.ink'))
+    .borderRadius(6)
+    .height(44)
+    .padding({ left: 14, right: 14 })
+    .alignItems(VerticalAlign.Center)
+    .accessibilityText('收一笺')
+    .opacity(this.composePressed ? 0.85 : (this.composeHovered ? 0.92 : 1))
+    .onHover((isHover: boolean) => {
+      this.composeHovered = isHover;
+    })
+    .onTouch((event: TouchEvent) => {
+      if (event.type === TouchType.Down) {
+        this.composePressed = true;
+      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+        this.composePressed = false;
+      }
+    })
+    .onClick(() => this.onCompose())
+  }
+
+  @Builder
+  BatchButton() {
+    Text(this.appState.selectionMode ? '完成' : '批量')
+      .fontSize(12)
+      .fontColor($r('app.color.ink_secondary'))
+      .height(44)
+      .padding({ left: 8, right: 8 })
+      .accessibilityText(this.appState.selectionMode ? '退出批量选择' : '进入批量选择')
+      .focusable(true)
+      .backgroundColor(this.batchPressed || this.batchHovered
+        ? $r('app.color.surface_alt')
+        : Color.Transparent)
+      .borderRadius(8)
+      .onHover((isHover: boolean) => {
+        this.batchHovered = isHover;
+      })
+      .onTouch((event: TouchEvent) => {
+        if (event.type === TouchType.Down) {
+          this.batchPressed = true;
+        } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+          this.batchPressed = false;
+        }
+      })
+      .onClick(() => this.toggleSelectionMode())
   }
 
   build() {
     Column() {
       Row() {
-        if (!this.folderDocked) {
-          Text('☰')
-            .fontSize(16)
-            .fontColor($r('app.color.ink_secondary'))
-            .width(44)
-            .height(44)
-            .textAlign(TextAlign.Center)
-            .accessibilityText('打开文件夹')
-            .focusable(true)
-            .onClick(() => {
-              this.appState.folderDrawerOpen = true;
-            })
+        // Icon mirrors the rail state: expanded -> open_sidebar, collapsed
+        // -> close_sidebar. The drawer form has no persistent state and
+        // always shows open_sidebar; the accessibility label still names the
+        // action. The glyph sits in a centered Stack: a sized SymbolGlyph
+        // paints its background on the placeholder box, which does not follow
+        // the glyph anchor and reads as misaligned.
+        Stack({ alignContent: Alignment.Center }) {
+          SymbolGlyph(this.folderDocked
+            ? (this.appState.sideNavOpen
+              ? $r('sys.symbol.open_sidebar')
+              : $r('sys.symbol.close_sidebar'))
+            : $r('sys.symbol.open_sidebar'))
+            .fontSize(20)
+            .fontColor([$r('app.color.ink_secondary')])
         }
-        Blank()
-        Text(this.appState.selectionMode ? '完成' : '批量')
-          .fontSize(12)
-          .fontColor($r('app.color.ink_secondary'))
-          .height(44)
-          .padding({ left: 8, right: 8 })
-          .accessibilityText(this.appState.selectionMode ? '退出批量选择' : '进入批量选择')
-          .focusable(true)
-          .onClick(() => this.toggleSelectionMode())
+        .width(44)
+        .height(44)
+        .backgroundColor(this.hamburgerPressed || this.hamburgerHovered
+          ? $r('app.color.surface_alt')
+          : Color.Transparent)
+        .borderRadius(8)
+        .accessibilityText(this.folderDocked
+          ? (this.appState.sideNavOpen ? '收起侧边栏' : '展开侧边栏')
+          : '打开侧边栏')
+        .focusable(true)
+        .onHover((isHover: boolean) => {
+          this.hamburgerHovered = isHover;
+        })
+        .onTouch((event: TouchEvent) => {
+          if (event.type === TouchType.Down) {
+            this.hamburgerPressed = true;
+          } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+            this.hamburgerPressed = false;
+          }
+        })
+        .onClick(() => {
+          if (this.folderDocked) {
+            this.appState.sideNavOpen = !this.appState.sideNavOpen;
+          } else {
+            this.appState.folderDrawerOpen = true;
+          }
+        })
       }
       .width('100%')
       .padding({ left: 20, right: 12 })
 
+      // The home header carries the brand on every breakpoint; the docked
+      // rail shows none. The ☰ collapses the docked rail on >=1000vp and
+      // opens the drawer overlay below it.
       Row() {
         Column({ space: 4 }) {
           Text('流笺')
@@ -729,16 +810,7 @@ export struct StreamHome {
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
 
-        Text('+ 收笺')
-          .fontSize(13)
-          .fontColor($r('app.color.inverse_ink'))
-          .backgroundColor($r('app.color.ink'))
-          .borderRadius(6)
-          .height(44)
-          .padding({ left: 14, right: 14 })
-          .textAlign(TextAlign.Center)
-          .accessibilityText('收一笺')
-          .onClick(() => this.onCompose())
+        this.ComposeButton()
       }
       .width('100%')
       .alignItems(VerticalAlign.Bottom)
@@ -755,20 +827,6 @@ export struct StreamHome {
           .layoutWeight(1)
           .accessibilityText('搜索')
           .onChange((value: string) => this.onKeywordChange(value))
-        PasteButton({ text: PasteDescription.PASTE })
-          .fontSize(14)
-          .fontColor($r('app.color.ink_secondary'))
-          .backgroundColor($r('app.color.surface'))
-          .borderRadius(6)
-          .height(44)
-          .padding({ left: 16, right: 16 })
-          .onClick((event: ClickEvent, result: PasteButtonOnClickResult) => {
-            if (result === PasteButtonOnClickResult.SUCCESS) {
-              this.readClipboard();
-            } else {
-              AppState.shared.toast('没有获得剪贴板授权');
-            }
-          })
       }
       .width('100%')
       .padding({ left: 20, right: 20, top: 18 })
@@ -779,7 +837,6 @@ export struct StreamHome {
             Text(option.label)
               .fontSize(12)
               .fontColor(this.filter === option.value ? $r('app.color.inverse_ink') : $r('app.color.ink_secondary'))
-              .backgroundColor(this.filter === option.value ? $r('app.color.ink') : Color.Transparent)
               .border({
                 width: 1,
                 color: this.filter === option.value ? $r('app.color.ink') : $r('app.color.line_strong')
@@ -789,6 +846,21 @@ export struct StreamHome {
               .padding({ left: 12, right: 12 })
               .textAlign(TextAlign.Center)
               .accessibilityText(`筛选：${option.label}`)
+              .backgroundColor(this.filter === option.value
+                ? $r('app.color.ink')
+                : (this.filterPressed === option.value || this.filterHovered === option.value
+                  ? $r('app.color.surface_alt')
+                  : Color.Transparent))
+              .onHover((isHover: boolean) => {
+                this.filterHovered = isHover ? option.value : -1;
+              })
+              .onTouch((event: TouchEvent) => {
+                if (event.type === TouchType.Down) {
+                  this.filterPressed = option.value;
+                } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+                  this.filterPressed = -1;
+                }
+              })
               .onClick(() => this.selectFilter(option.value))
           }, (option: FilterOption) => `${option.value}`)
         }
@@ -810,6 +882,20 @@ export struct StreamHome {
           .height(44)
           .padding({ left: 6, right: 6 })
           .accessibilityText('按创建时间排序')
+          .backgroundColor(this.sortPressed === BookmarkSort.CREATED_DESC || this.sortHovered === BookmarkSort.CREATED_DESC
+            ? $r('app.color.surface_alt')
+            : Color.Transparent)
+          .borderRadius(8)
+          .onHover((isHover: boolean) => {
+            this.sortHovered = isHover ? BookmarkSort.CREATED_DESC : -1;
+          })
+          .onTouch((event: TouchEvent) => {
+            if (event.type === TouchType.Down) {
+              this.sortPressed = BookmarkSort.CREATED_DESC;
+            } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+              this.sortPressed = -1;
+            }
+          })
           .onClick(() => this.selectSort(BookmarkSort.CREATED_DESC))
         Text('域名')
           .fontSize(12)
@@ -817,10 +903,26 @@ export struct StreamHome {
           .height(44)
           .padding({ left: 6, right: 6 })
           .accessibilityText('按域名排序')
+          .backgroundColor(this.sortPressed === BookmarkSort.DOMAIN_ASC || this.sortHovered === BookmarkSort.DOMAIN_ASC
+            ? $r('app.color.surface_alt')
+            : Color.Transparent)
+          .borderRadius(8)
+          .onHover((isHover: boolean) => {
+            this.sortHovered = isHover ? BookmarkSort.DOMAIN_ASC : -1;
+          })
+          .onTouch((event: TouchEvent) => {
+            if (event.type === TouchType.Down) {
+              this.sortPressed = BookmarkSort.DOMAIN_ASC;
+            } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+              this.sortPressed = -1;
+            }
+          })
           .onClick(() => this.selectSort(BookmarkSort.DOMAIN_ASC))
+        Blank()
+        this.BatchButton()
       }
       .width('100%')
-      .padding({ left: 20, right: 20 })
+      .padding({ left: 20, right: 12 })
       .alignItems(VerticalAlign.Center)
 
       if (this.appState.tagFilter.length > 0) {
@@ -828,16 +930,32 @@ export struct StreamHome {
           Text(`标签：${this.appState.tagFilter}`)
             .fontSize(12)
             .fontColor($r('app.color.ink_secondary'))
-          Text('×')
-            .fontSize(14)
-            .fontColor($r('app.color.ink_secondary'))
-            .height(44)
-            .width(44)
-            .textAlign(TextAlign.Center)
-            .accessibilityText('清除标签筛选')
-            .onClick(() => {
-              this.appState.tagFilter = '';
-            })
+          Stack({ alignContent: Alignment.Center }) {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(16)
+              .fontColor([$r('app.color.ink_secondary')])
+          }
+          .width(44)
+          .height(44)
+          .backgroundColor(this.clearTagPressed || this.clearTagHovered
+            ? $r('app.color.surface_alt')
+            : Color.Transparent)
+          .borderRadius(8)
+          .accessibilityText('清除标签筛选')
+          .focusable(true)
+          .onHover((isHover: boolean) => {
+            this.clearTagHovered = isHover;
+          })
+          .onTouch((event: TouchEvent) => {
+            if (event.type === TouchType.Down) {
+              this.clearTagPressed = true;
+            } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+              this.clearTagPressed = false;
+            }
+          })
+          .onClick(() => {
+            this.appState.tagFilter = '';
+          })
         }
         .padding({ left: 20, right: 20 })
       }
@@ -847,16 +965,32 @@ export struct StreamHome {
           Text(`文件夹：${this.folderLabel}`)
             .fontSize(12)
             .fontColor($r('app.color.ink_secondary'))
-          Text('×')
-            .fontSize(14)
-            .fontColor($r('app.color.ink_secondary'))
-            .height(44)
-            .width(44)
-            .textAlign(TextAlign.Center)
-            .accessibilityText('清除文件夹筛选')
-            .onClick(() => {
-              this.appState.folderFilter = '';
-            })
+          Stack({ alignContent: Alignment.Center }) {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(16)
+              .fontColor([$r('app.color.ink_secondary')])
+          }
+          .width(44)
+          .height(44)
+          .backgroundColor(this.clearFolderPressed || this.clearFolderHovered
+            ? $r('app.color.surface_alt')
+            : Color.Transparent)
+          .borderRadius(8)
+          .accessibilityText('清除文件夹筛选')
+          .focusable(true)
+          .onHover((isHover: boolean) => {
+            this.clearFolderHovered = isHover;
+          })
+          .onTouch((event: TouchEvent) => {
+            if (event.type === TouchType.Down) {
+              this.clearFolderPressed = true;
+            } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+              this.clearFolderPressed = false;
+            }
+          })
+          .onClick(() => {
+            this.appState.folderFilter = '';
+          })
         }
         .padding({ left: 20, right: 20 })
       }
@@ -981,6 +1115,7 @@ export struct StreamHome {
             .fontColor($r('app.color.ink_secondary'))
             .height(32)
             .padding({ left: 8, right: 8 })
+            .responseRegion({ x: -8, y: -6, width: 48, height: 44 })
             .accessibilityText('取消移动书签')
             .onClick(() => {
               this.bookmarkMoveOpen = false;
@@ -1057,6 +1192,7 @@ export struct StreamHome {
           .fontColor($r('app.color.ink_secondary'))
           .height(36)
           .padding({ left: 8, right: 8 })
+          .responseRegion({ x: -8, y: -4, width: 48, height: 44 })
           .accessibilityText(this.appState.selectedBookmarkIds.length === this.filtered.length ? '取消全选当前列表' : '全选当前列表')
           .onClick(() => this.selectAllLoaded())
         Text('完成')
@@ -1064,6 +1200,7 @@ export struct StreamHome {
           .fontColor($r('app.color.ink'))
           .height(36)
           .padding({ left: 8, right: 8 })
+          .responseRegion({ x: -8, y: -4, width: 48, height: 44 })
           .accessibilityText('退出多选')
           .onClick(() => this.exitSelection())
       }
@@ -1081,6 +1218,7 @@ export struct StreamHome {
               .fontColor($r('app.color.ink_secondary'))
               .height(32)
               .padding({ left: 8, right: 8 })
+              .responseRegion({ x: -8, y: -6, width: 48, height: 44 })
               .accessibilityText('取消批量移动')
               .onClick(() => {
                 this.batchMoveOpen = false;

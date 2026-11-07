@@ -1,6 +1,7 @@
+import { pasteboard } from '@kit.BasicServicesKit';
 import { AppState } from '../common/AppState';
 import { BookmarkSource } from '../common/Constants';
-import { domainOf, isValidHttpUrl } from '../common/UrlUtil';
+import { domainOf, extractFirstUrl, isValidHttpUrl } from '../common/UrlUtil';
 import { FlowRepository } from '../repository/FlowRepository';
 
 @ComponentV2
@@ -66,6 +67,21 @@ export struct InboxSheet {
     }
   }
 
+  private async readClipboard(): Promise<void> {
+    try {
+      const data = await pasteboard.getSystemPasteboard().getData();
+      const text = data.getPrimaryText();
+      const found = extractFirstUrl(text);
+      if (found.length === 0) {
+        AppState.shared.toast('剪贴板里没有链接');
+        return;
+      }
+      this.urlText = found;
+    } catch (error) {
+      AppState.shared.toast('读不到剪贴板');
+    }
+  }
+
   build() {
     Stack({ alignContent: Alignment.Bottom }) {
       Column()
@@ -99,16 +115,34 @@ export struct InboxSheet {
         }
         .width('100%')
 
-        TextInput({ text: this.urlText, placeholder: 'https://…' })
-          .fontSize(14)
-          .fontColor($r('app.color.ink'))
-          .placeholderColor($r('app.color.ink_tertiary'))
-          .backgroundColor($r('app.color.surface_alt'))
-          .borderRadius(6)
-          .height(44)
-          .onChange((value: string) => {
-            this.urlText = value;
-          })
+        Row({ space: 8 }) {
+          TextInput({ text: this.urlText, placeholder: 'https://…' })
+            .fontSize(14)
+            .fontColor($r('app.color.ink'))
+            .placeholderColor($r('app.color.ink_tertiary'))
+            .backgroundColor($r('app.color.surface_alt'))
+            .borderRadius(6)
+            .height(44)
+            .layoutWeight(1)
+            .onChange((value: string) => {
+              this.urlText = value;
+            })
+          PasteButton({ text: PasteDescription.PASTE })
+            .fontSize(14)
+            .fontColor($r('app.color.ink_secondary'))
+            .backgroundColor($r('app.color.surface_alt'))
+            .borderRadius(6)
+            .height(44)
+            .padding({ left: 16, right: 16 })
+            .onClick((event: ClickEvent, result: PasteButtonOnClickResult) => {
+              if (result === PasteButtonOnClickResult.SUCCESS) {
+                this.readClipboard();
+              } else {
+                AppState.shared.toast('没有获得剪贴板授权');
+              }
+            })
+        }
+        .width('100%')
 
         if (this.urlText.length > 0 && isValidHttpUrl(this.urlText)) {
           Text(domainOf(this.urlText))

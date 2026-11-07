@@ -1,4 +1,4 @@
-import { ConfigurationConstant } from '@kit.AbilityKit';
+import { ConfigurationConstant, bundleManager } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { picker, fileIo as fs } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
@@ -7,6 +7,7 @@ import { ImportPreview } from '../model/ImportPreview';
 import { ImportResult } from '../model/ImportResult';
 import { AppState } from '../common/AppState';
 import { KeyCode } from '@kit.InputKit';
+import { PageHeader } from '../components/PageHeader';
 
 const SETTINGS_NAME: string = 'flowpage_settings';
 const AUTO_SNAPSHOT_KEY: string = 'auto_snapshot';
@@ -15,6 +16,7 @@ const READ_CHUNK: number = 262144;
 @ComponentV2
 export struct SettingsPage {
   @Param showBack: boolean = false;
+  @Param showMenu: boolean = false;
   @Event onBack: () => void = () => {};
   @Local appState: AppState = AppState.shared;
   @Local summary: LibrarySummary = new LibrarySummary();
@@ -24,12 +26,24 @@ export struct SettingsPage {
   @Local progressText: string = '';
   @Local importResult: ImportResult | undefined = undefined;
   @Local preview: ImportPreview | undefined = undefined;
+  @Local versionName: string = '';
   private pendingHtml: string = '';
   private cancelRequested: boolean = false;
 
   aboutToAppear(): void {
     this.readSettings();
+    this.readVersionName();
     this.loadSummary();
+  }
+
+  private readVersionName(): void {
+    // Empty string hides the label; never fall back to a hardcoded version.
+    try {
+      this.versionName = bundleManager.getBundleInfoForSelfSync(
+        bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT).versionName;
+    } catch (error) {
+      this.versionName = '';
+    }
   }
 
   @Monitor('appState.refreshTick')
@@ -239,32 +253,27 @@ export struct SettingsPage {
     });
   }
 
+  @Builder
+  HeaderTrailing() {
+    if (this.versionName.length > 0) {
+      Text(`v${this.versionName}`)
+        .fontSize(12)
+        .fontColor($r('app.color.ink_tertiary'))
+    }
+  }
+
   build() {
     Column() {
-      Row() {
-        if (this.showBack) {
-          Text('返回')
-            .fontSize(13)
-            .fontColor($r('app.color.ink_secondary'))
-            .height(44)
-            .padding({ right: 12 })
-            .accessibilityText('返回')
-            .focusable(true)
-            .onClick(() => this.onBack())
-            .onKeyEvent((event: KeyEvent) => {
-              if (event.type === KeyType.Down &&
-                (event.keyCode === KeyCode.KEYCODE_ENTER || event.keyCode === KeyCode.KEYCODE_SPACE)) {
-                this.onBack();
-              }
-            })
+      PageHeader({
+        showBack: this.showBack,
+        showMenu: this.showMenu,
+        onBack: () => {
+          this.onBack();
+        },
+        trailing: () => {
+          this.HeaderTrailing()
         }
-        Blank()
-        Text('v1.0.0')
-          .fontSize(12)
-          .fontColor($r('app.color.ink_tertiary'))
-      }
-      .width('100%')
-      .padding({ left: 20, right: 20, top: 12 })
+      })
 
       Text('设置')
         .fontSize(34)
@@ -417,10 +426,6 @@ export struct SettingsPage {
             Text('流笺 FlowPage')
               .fontSize(14)
               .fontColor($r('app.color.ink'))
-            Text('本地优先的链接收笺工具。没有账号、没有推荐、没有埋点。')
-              .fontSize(12)
-              .fontColor($r('app.color.ink_secondary'))
-              .lineHeight(20)
             Text('流笺不读取其他浏览器的书签数据库；书签迁移通过 HTML 导入与分享收笺完成。')
               .fontSize(12)
               .fontColor($r('app.color.ink_secondary'))

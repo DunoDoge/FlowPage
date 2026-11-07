@@ -27,6 +27,13 @@ export struct BookmarkRow {
   @Event onBeginDrag: (id: string) => void = (id: string) => {};
   @Event onDragFinished: () => void = () => {};
   @Local pressing: boolean = false;
+  // Manual hover/press feedback state for the trailing star/more buttons;
+  // stateStyles leaves the pressed background stuck, hdsEffect.pressShadow
+  // does not render on custom components.
+  @Local starHovered: boolean = false;
+  @Local starPressed: boolean = false;
+  @Local moreHovered: boolean = false;
+  @Local morePressed: boolean = false;
   private suppressClick: boolean = false;
 
   private displayTitle(): string {
@@ -158,14 +165,28 @@ export struct BookmarkRow {
       if (!this.selectionMode) {
         Button(this.bookmark.starred ? '★' : '☆')
           .type(ButtonType.Normal)
+          .stateEffect(false)
           .fontSize(16)
           .fontColor(this.bookmark.starred ? $r('app.color.ink') : $r('app.color.ink_tertiary'))
-          .backgroundColor(Color.Transparent)
           .width(32)
           .height(44)
           .padding(0)
           .responseRegion({ x: -12, y: 0, width: 44, height: 44 })
           .margin({ right: 8 })
+          .backgroundColor(this.starPressed || this.starHovered
+            ? $r('app.color.surface_alt')
+            : Color.Transparent)
+          .borderRadius(8)
+          .onHover((isHover: boolean) => {
+            this.starHovered = isHover;
+          })
+          .onTouch((event: TouchEvent) => {
+            if (event.type === TouchType.Down) {
+              this.starPressed = true;
+            } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+              this.starPressed = false;
+            }
+          })
           .accessibilityText(this.bookmark.starred ? '取消星标' : '加星标')
           .onClick(() => {
             const next = !this.bookmark.starred;
@@ -175,15 +196,32 @@ export struct BookmarkRow {
       }
 
       if (!this.selectionMode) {
-        Button('…')
+        Button() {
+          SymbolGlyph($r('sys.symbol.more'))
+            .fontSize(16)
+            .fontColor([$r('app.color.ink_secondary')])
+        }
           .type(ButtonType.Normal)
-          .fontSize(16)
-          .fontColor($r('app.color.ink_secondary'))
-          .backgroundColor(Color.Transparent)
+          .stateEffect(false)
           .width(32)
           .height(44)
           .padding(0)
           .margin({ right: 4 })
+          .responseRegion({ x: 0, y: 0, width: 44, height: 44 })
+          .backgroundColor(this.morePressed || this.moreHovered
+            ? $r('app.color.surface_alt')
+            : Color.Transparent)
+          .borderRadius(8)
+          .onHover((isHover: boolean) => {
+            this.moreHovered = isHover;
+          })
+          .onTouch((event: TouchEvent) => {
+            if (event.type === TouchType.Down) {
+              this.morePressed = true;
+            } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+              this.morePressed = false;
+            }
+          })
           .accessibilityText('更多操作')
           .onClick(() => this.requestActions())
       }

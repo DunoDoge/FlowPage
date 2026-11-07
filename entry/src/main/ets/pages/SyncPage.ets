@@ -7,11 +7,12 @@ import { SyncConfigStore } from '../core/sync/SyncConfigStore';
 import { SyncEngine, SyncReport } from '../core/sync/SyncEngine';
 import { SyncErrorText } from '../core/sync/SyncErrorText';
 import { SyncRecord } from '../core/sync/SyncRecord';
-import { KeyCode } from '@kit.InputKit';
+import { PageHeader } from '../components/PageHeader';
 
 @ComponentV2
 export struct SyncPage {
   @Param showBack: boolean = false;
+  @Param showMenu: boolean = false;
   @Event onBack: () => void = () => {};
   @Local appState: AppState = AppState.shared;
   @Local summary: LibrarySummary = new LibrarySummary();
@@ -220,32 +221,25 @@ export struct SyncPage {
     return `上次同步 ${formatRelative(this.lastSync)}`;
   }
 
+  @Builder
+  HeaderTrailing() {
+    Text(this.connected ? '已连接' : (this.configured ? '已配置' : '本地模式'))
+      .fontSize(12)
+      .fontColor($r('app.color.ink_tertiary'))
+  }
+
   build() {
     Column() {
-      Row() {
-        if (this.showBack) {
-          Text('返回')
-            .fontSize(13)
-            .fontColor($r('app.color.ink_secondary'))
-            .height(44)
-            .padding({ right: 12 })
-            .accessibilityText('返回')
-            .focusable(true)
-            .onClick(() => this.onBack())
-            .onKeyEvent((event: KeyEvent) => {
-              if (event.type === KeyType.Down &&
-                (event.keyCode === KeyCode.KEYCODE_ENTER || event.keyCode === KeyCode.KEYCODE_SPACE)) {
-                this.onBack();
-              }
-            })
+      PageHeader({
+        showBack: this.showBack,
+        showMenu: this.showMenu,
+        onBack: () => {
+          this.onBack();
+        },
+        trailing: () => {
+          this.HeaderTrailing()
         }
-        Blank()
-        Text(this.connected ? '已连接' : (this.configured ? '已配置' : '本地模式'))
-          .fontSize(12)
-          .fontColor($r('app.color.ink_tertiary'))
-      }
-      .width('100%')
-      .padding({ left: 20, right: 20, top: 12 })
+      })
 
       Text('同步')
         .fontSize(34)
@@ -385,21 +379,6 @@ export struct SyncPage {
           .alignItems(HorizontalAlign.Start)
 
           this.ConflictPanel()
-
-          Column({ space: 8 }) {
-            Text('分布式')
-              .fontSize(14)
-              .fontColor($r('app.color.ink'))
-            Text('同账号可信设备、同一局域网内零配置同步，将在下一阶段接入。')
-              .fontSize(12)
-              .fontColor($r('app.color.ink_secondary'))
-              .lineHeight(19)
-          }
-          .width('100%')
-          .padding(18)
-          .backgroundColor($r('app.color.surface_alt'))
-          .borderRadius(10)
-          .alignItems(HorizontalAlign.Start)
         }
         .padding({ left: 20, right: 20, bottom: 32 })
       }
