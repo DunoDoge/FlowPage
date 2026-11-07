@@ -60,7 +60,15 @@ export struct DetailContent {
 
   @Monitor('appState.refreshTick')
   onLibraryChanged(): void {
-    this.syncSnapshot().catch(() => {});
+    this.refreshOnLibraryChanged().catch((): void => {});
+  }
+
+  private async refreshOnLibraryChanged(): Promise<void> {
+    try {
+      await this.syncSnapshot();
+    } finally {
+      this.refreshFolderContext();
+    }
   }
 
   // applyMetadata() can run outside this page (e.g. the share flow). Refresh
@@ -101,19 +109,38 @@ export struct DetailContent {
     return '';
   }
 
-  private async loadFolderContext(): Promise<void> {
+  private async loadFolderContext(updateDraft: boolean): Promise<void> {
     try {
       const tree = await FlowRepository.get().folderTree();
       this.folderLabel = this.bookmark.folderId.length > 0
         ? DetailContent.findNodePath(tree, this.bookmark.folderId)
         : '';
-      this.draftFolderPath = this.draftFolderId.length > 0
-        ? DetailContent.findNodePath(tree, this.draftFolderId)
-        : '';
+      if (updateDraft) {
+        this.draftFolderPath = this.draftFolderId.length > 0
+          ? DetailContent.findNodePath(tree, this.draftFolderId)
+          : '';
+      }
     } catch (error) {
       this.folderLabel = '';
-      this.draftFolderPath = '';
+      if (updateDraft) {
+        this.draftFolderPath = '';
+      }
     }
+  }
+
+  private refreshFolderContext(): void {
+    if (this.bookmarkId.length === 0 || !this.hasBookmark) {
+      return;
+    }
+    const updateDraft = !this.editing;
+    if (this.bookmark.folderId.length === 0) {
+      this.folderLabel = '';
+      if (updateDraft) {
+        this.draftFolderPath = '';
+      }
+      return;
+    }
+    this.loadFolderContext(updateDraft).catch((): void => {});
   }
 
   private clearReadingTimer(): void {
@@ -155,7 +182,7 @@ export struct DetailContent {
     this.draftExcerpt = found.excerpt;
     this.draftTags = found.tags.join(', ');
     this.draftFolderId = found.folderId;
-    this.loadFolderContext().catch((): void => {});
+    this.loadFolderContext(true).catch((): void => {});
     if (found.readState === ReadState.UNREAD && !found.deleted) {
       found.readState = ReadState.READING;
       try {

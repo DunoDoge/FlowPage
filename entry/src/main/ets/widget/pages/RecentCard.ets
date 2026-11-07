@@ -75,7 +75,7 @@ struct RecentCard {
           .justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Start)
           .onClick(() => this.open(item.id))
-        }, (item: CardLine) => item.id)
+        }, (item: CardLine) => `${item.id}|${item.title}|${item.domain}`)
       }
     }
     .width('100%')

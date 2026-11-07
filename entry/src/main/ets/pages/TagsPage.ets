@@ -12,6 +12,7 @@ export struct TagsPage {
   @Local appState: AppState = AppState.shared;
   @Local tags: TagCount[] = [];
   @Local editingId: string = '';
+  @Local editingName: string = '';
   @Local draftName: string = '';
   @Local loading: boolean = true;
 
@@ -43,7 +44,32 @@ export struct TagsPage {
 
   private startEdit(tag: TagCount): void {
     this.editingId = tag.id;
+    this.editingName = tag.name;
     this.draftName = tag.name;
+  }
+
+  private findTag(id: string): TagCount | undefined {
+    for (let i = 0; i < this.tags.length; i++) {
+      if (this.tags[i].id === id) {
+        return this.tags[i];
+      }
+    }
+    return undefined;
+  }
+
+  private tagName(id: string): string {
+    const tag = this.findTag(id);
+    return tag !== undefined ? tag.name : '';
+  }
+
+  private canonicalName(name: string): string {
+    const key = name.toLowerCase();
+    for (let i = 0; i < this.tags.length; i++) {
+      if (this.tags[i].name.toLowerCase() === key) {
+        return this.tags[i].name;
+      }
+    }
+    return name;
   }
 
   private async rename(): Promise<void> {
@@ -52,10 +78,16 @@ export struct TagsPage {
       AppState.shared.toast('标签名不能为空');
       return;
     }
+    const editingId = this.editingId;
+    const oldName = this.editingName;
     try {
-      const merged = await FlowRepository.get().renameTag(this.editingId, name);
+      const merged = await FlowRepository.get().renameTag(editingId, name);
       this.editingId = '';
       await this.load();
+      if (oldName.length > 0 && this.appState.tagFilter === oldName) {
+        const resolved = merged ? this.canonicalName(name) : this.tagName(editingId);
+        this.appState.tagFilter = resolved.length > 0 ? resolved : name;
+      }
       AppState.shared.toast(merged ? '已有同名标签，已合并' : '改好了');
     } catch (error) {
       AppState.shared.toast('改名失败，请换一个名字');
@@ -74,10 +106,15 @@ export struct TagsPage {
   }
 
   private async mergeInto(other: TagCount): Promise<void> {
+    const sourceName = this.editingName;
     try {
       await FlowRepository.get().mergeTags(this.editingId, other.id);
       this.editingId = '';
       await this.load();
+      if (sourceName.length > 0 && this.appState.tagFilter === sourceName) {
+        const targetName = this.tagName(other.id);
+        this.appState.tagFilter = targetName.length > 0 ? targetName : other.name;
+      }
       AppState.shared.toast('已经合并');
     } catch (error) {
       AppState.shared.toast('合并失败，请稍后再试');
@@ -187,7 +224,7 @@ export struct TagsPage {
                   .color($r('app.color.line'))
               }
             }
-          }, (tag: TagCount) => tag.id)
+          }, (tag: TagCount) => `${tag.id}|${tag.name}|${tag.count}`)
         }
         .width('100%')
         .layoutWeight(1)
@@ -235,10 +272,9 @@ export struct TagsPage {
           .padding({ left: 12, right: 12 })
           .accessibilityText('删除这个标签')
           .onClick(() => {
-            for (let i = 0; i < this.tags.length; i++) {
-              if (this.tags[i].id === this.editingId) {
-                this.confirmDelete(this.tags[i]);
-              }
+            const tag = this.findTag(this.editingId);
+            if (tag !== undefined) {
+              this.confirmDelete(tag);
             }
           })
         Text('取消')
@@ -272,7 +308,7 @@ export struct TagsPage {
                 .accessibilityText(`合并到${other.name}`)
                 .onClick(() => this.mergeInto(other))
             }
-          }, (other: TagCount) => other.id)
+          }, (other: TagCount) => `${other.id}|${other.name}`)
         }
         .width('100%')
       }

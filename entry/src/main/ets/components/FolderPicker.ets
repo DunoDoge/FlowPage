@@ -226,7 +226,7 @@ export struct FolderPicker {
           Row() {
             ForEach(this.columns, (column: PickerColumn, index: number) => {
               this.ColumnView(column, index)
-            }, (column: PickerColumn, index: number) => `${index}-${column.parentId}`)
+            }, (column: PickerColumn, index: number) => this.columnKey(column, index))
           }
           .alignItems(VerticalAlign.Top)
         }
@@ -242,6 +242,15 @@ export struct FolderPicker {
     .backgroundColor($r('app.color.surface_alt'))
     .borderRadius(8)
     .alignItems(HorizontalAlign.Start)
+  }
+
+  private columnKey(column: PickerColumn, index: number): string {
+    const parts: string[] = [`${index}|${column.parentId}|${column.title}`];
+    for (let i = 0; i < column.nodes.length; i++) {
+      const node = column.nodes[i];
+      parts.push(`${node.folder.id}:${node.folder.name}:${node.totalCount}`);
+    }
+    return parts.join('|');
   }
 
   @Builder
@@ -286,7 +295,7 @@ export struct FolderPicker {
         Column() {
           ForEach(column.nodes, (node: FolderNode) => {
             this.RowView(node, index)
-          }, (node: FolderNode) => node.folder.id)
+          }, (node: FolderNode) => `${node.folder.id}|${node.folder.name}|${node.totalCount}`)
           if (this.showCreate) {
             this.CreateRow(column, index)
           }

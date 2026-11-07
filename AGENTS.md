@@ -165,6 +165,10 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   「…」`sys.symbol.more` 锚定面板（桌面右键同入口），不要再加长按菜单或 context menu；无拖拽路径经 `FolderPicker`。
 - 动态文案不要只放在带参 `@Builder` 里：实测 `ReadingShell` 的「网页/阅读」标签在模式切换后会残留旧值，
   改为直接内联 `Text` 或提升到 `@Local` 状态；其余带参 builder 的静态文案不受影响。
+- `ForEach` 键值必须覆盖行内会显示的可变字段（如 `${id}|${name}|${count}`）：普通 DTO 不是 `@ObservedV2`，
+  只用稳定 id 作键时数据源替换会复用旧行、名称/计数停在旧值，直到页面重建才更新。现有示例见
+  `FolderPanel` 树行、`StreamHome` 书签行（含 `rev|updatedAt`）与 `TagsPage` 标签行；往行内加新可变字段时同步加入键值。
+  嵌套 `ForEach` 时外层键也必须随内层可见内容变化，否则外层行复用、内层不会重建。
 - 图标一律 `SymbolGlyph` + `sys.symbol.*`（☰=`open_sidebar`/`close_sidebar`、加=`plus`、更多=`more`、
   关=`xmark`；资源名以 SDK `ets-loader/sysResource.js` symbol 组为准，勿凭记忆猜名）。`SymbolGlyph.fontColor`
   只收 `Array<ResourceColor>`（`[$r(...)]`）。hover/按压反馈用 `onHover((isHover: boolean)=>…)` 与
