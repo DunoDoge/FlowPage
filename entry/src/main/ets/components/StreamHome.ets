@@ -7,19 +7,10 @@ import { FolderDragSession } from '../common/FolderDragSession';
 import { LibrarySummary, BatchImpact, BatchOutcome, FlowRepository } from '../repository/FlowRepository';
 import { BookmarkRow } from './BookmarkRow';
 import { FolderPicker } from './FolderPicker';
+import { PageHeader } from './PageHeader';
 
-class FilterOption {
-  label: string = '';
-  value: number = 0;
-}
-
-const FILTERS: FilterOption[] = [
-  { label: '全部', value: StreamFilter.ALL },
-  { label: '未读', value: StreamFilter.UNREAD },
-  { label: '星标', value: StreamFilter.STARRED },
-  { label: '归档', value: StreamFilter.ARCHIVED },
-  { label: '回收站', value: StreamFilter.TRASH }
-];
+// Filter switching lives in the library sidebar smart views only; the home
+// body has no chip row (real-device feedback revision, task 7.1).
 
 const PAGE_SIZE: number = 50;
 
@@ -28,6 +19,10 @@ export struct StreamHome {
   @Param isWide: boolean = false;
   @Param folderDocked: boolean = false;
   @Param refreshKey: number = 0;
+  // Extra bottom inset for the floating tab bar; only non-zero on the phone
+  // shell while the bar is visible (batch mode swaps the bar for the action
+  // bar, so the reserve drops to 0 then).
+  @Param bottomReserve: number = 0;
   @Event onOpen: (id: string) => void = (id: string) => {};
   @Event onCompose: () => void = () => {};
   @Event onOpenPane: (pane: string) => void = (pane: string) => {};
@@ -36,7 +31,6 @@ export struct StreamHome {
   @Local filtered: Bookmark[] = [];
   @Local summary: LibrarySummary = new LibrarySummary();
   @Local keyword: string = '';
-  @Local filter: number = StreamFilter.ALL;
   @Local sort: number = BookmarkSort.CREATED_DESC;
   @Local folderLabel: string = '';
   @Local loading: boolean = true;
@@ -54,8 +48,6 @@ export struct StreamHome {
   // its own transient state here.
   @Local hamburgerHovered: boolean = false;
   @Local hamburgerPressed: boolean = false;
-  @Local filterHovered: number = -1;
-  @Local filterPressed: number = -1;
   @Local sortHovered: number = -1;
   @Local sortPressed: number = -1;
   @Local batchHovered: boolean = false;
@@ -104,6 +96,15 @@ export struct StreamHome {
     this.load();
   }
 
+  // homeFilter lives on AppState: the sidebar smart views and the stream
+  // chips share one source of truth, so any write reloads the list here.
+  @Monitor('appState.homeFilter')
+  onHomeFilterChanged(): void {
+    this.exitSelection();
+    this.showActions = false;
+    this.load();
+  }
+
   @Monitor('appState.folderFilter')
   onFolderFilterChanged(): void {
     this.exitSelection();
@@ -125,7 +126,7 @@ export struct StreamHome {
 
   private currentQuery(): BookmarkQuery {
     const query = new BookmarkQuery();
-    query.filter = this.filter;
+    query.filter = this.appState.homeFilter;
     query.tag = this.appState.tagFilter;
     query.keyword = this.keyword;
     query.sort = this.sort;
@@ -649,14 +650,6 @@ export struct StreamHome {
     }
   }
 
-  private selectFilter(value: number): void {
-    this.filter = value;
-    this.appState.homeFilter = value;
-    this.exitSelection();
-    this.showActions = false;
-    this.load();
-  }
-
   private selectSort(value: number): void {
     this.sort = value;
     this.exitSelection();
@@ -687,6 +680,13 @@ export struct StreamHome {
       return '正在翻开…';
     }
     return `${this.summary.total} 条 · 今天收下 ${this.todayCount} 条`;
+  }
+
+  @Builder
+  SubtitleStatus() {
+    Text(this.subtitle())
+      .fontSize(12)
+      .fontColor($r('app.color.ink_tertiary'))
   }
 
   @Builder
@@ -747,73 +747,72 @@ export struct StreamHome {
 
   build() {
     Column() {
-      Row() {
-        // Icon mirrors the rail state: expanded -> open_sidebar, collapsed
-        // -> close_sidebar. The drawer form has no persistent state and
-        // always shows open_sidebar; the accessibility label still names the
-        // action. The glyph sits in a centered Stack: a sized SymbolGlyph
-        // paints its background on the placeholder box, which does not follow
-        // the glyph anchor and reads as misaligned.
-        Stack({ alignContent: Alignment.Center }) {
-          SymbolGlyph(this.folderDocked
-            ? (this.appState.sideNavOpen
+      // >=1000vp only: the hamburger toggles the docked rail. Below that
+      // breakpoint the floating mini bar owns the library entry (design
+      // D12), so the header carries no drawer button at all. The glyph
+      // sits in a centered Stack: a sized SymbolGlyph paints its background
+      // on the placeholder box, which does not follow the glyph anchor and
+      // reads as misaligned.
+      if (this.folderDocked) {
+        Row() {
+          Stack({ alignContent: Alignment.Center }) {
+            SymbolGlyph(this.appState.sideNavOpen
               ? $r('sys.symbol.open_sidebar')
               : $r('sys.symbol.close_sidebar'))
-            : $r('sys.symbol.open_sidebar'))
-            .fontSize(20)
-            .fontColor([$r('app.color.ink_secondary')])
-        }
-        .width(44)
-        .height(44)
-        .backgroundColor(this.hamburgerPressed || this.hamburgerHovered
-          ? $r('app.color.surface_alt')
-          : Color.Transparent)
-        .borderRadius(8)
-        .accessibilityText(this.folderDocked
-          ? (this.appState.sideNavOpen ? '收起侧边栏' : '展开侧边栏')
-          : '打开侧边栏')
-        .focusable(true)
-        .onHover((isHover: boolean) => {
-          this.hamburgerHovered = isHover;
-        })
-        .onTouch((event: TouchEvent) => {
-          if (event.type === TouchType.Down) {
-            this.hamburgerPressed = true;
-          } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-            this.hamburgerPressed = false;
+              .fontSize(20)
+              .fontColor([$r('app.color.ink_secondary')])
           }
-        })
-        .onClick(() => {
-          if (this.folderDocked) {
+          .width(44)
+          .height(44)
+          .backgroundColor(this.hamburgerPressed || this.hamburgerHovered
+            ? $r('app.color.surface_alt')
+            : Color.Transparent)
+          .borderRadius(8)
+          .accessibilityText(this.appState.sideNavOpen ? '收起侧边栏' : '展开侧边栏')
+          .focusable(true)
+          .onHover((isHover: boolean) => {
+            this.hamburgerHovered = isHover;
+          })
+          .onTouch((event: TouchEvent) => {
+            if (event.type === TouchType.Down) {
+              this.hamburgerPressed = true;
+            } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+              this.hamburgerPressed = false;
+            }
+          })
+          .onClick(() => {
             this.appState.sideNavOpen = !this.appState.sideNavOpen;
-          } else {
-            this.appState.folderDrawerOpen = true;
+          })
+          Blank()
+          this.SubtitleStatus()
+        }
+        .width('100%')
+        .padding({ left: 20, right: 20 })
+      } else {
+        // Mirror the tab pages' PageHeader anatomy so the 34fp brand title
+        // top-aligns with the destination titles; the count status takes
+        // the same trailing slot as "N 个标签" / "已连接".
+        PageHeader({
+          trailing: () => {
+            this.SubtitleStatus()
           }
         })
       }
-      .width('100%')
-      .padding({ left: 20, right: 12 })
 
       // The home header carries the brand on every breakpoint; the docked
-      // rail shows none. The ☰ collapses the docked rail on >=1000vp and
-      // opens the drawer overlay below it.
+      // rail shows none. Below 1000vp the header holds brand and compose
+      // only -- the library lives in the floating mini bar.
       Row() {
-        Column({ space: 4 }) {
-          Text('流笺')
-            .fontSize(34)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.ink'))
-          Text(this.subtitle())
-            .fontSize(12)
-            .fontColor($r('app.color.ink_tertiary'))
-        }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1)
+        Text('流笺')
+          .fontSize(34)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.ink'))
+          .layoutWeight(1)
 
         this.ComposeButton()
       }
       .width('100%')
-      .alignItems(VerticalAlign.Bottom)
+      .alignItems(VerticalAlign.Top)
       .padding({ left: 20, right: 20, top: 14 })
 
       Row({ space: 8 }) {
@@ -830,47 +829,6 @@ export struct StreamHome {
       }
       .width('100%')
       .padding({ left: 20, right: 20, top: 18 })
-
-      Scroll() {
-        Row({ space: 8 }) {
-          ForEach(FILTERS, (option: FilterOption) => {
-            Text(option.label)
-              .fontSize(12)
-              .fontColor(this.filter === option.value ? $r('app.color.inverse_ink') : $r('app.color.ink_secondary'))
-              .border({
-                width: 1,
-                color: this.filter === option.value ? $r('app.color.ink') : $r('app.color.line_strong')
-              })
-              .borderRadius(999)
-              .height(44)
-              .padding({ left: 12, right: 12 })
-              .textAlign(TextAlign.Center)
-              .accessibilityText(`筛选：${option.label}`)
-              .backgroundColor(this.filter === option.value
-                ? $r('app.color.ink')
-                : (this.filterPressed === option.value || this.filterHovered === option.value
-                  ? $r('app.color.surface_alt')
-                  : Color.Transparent))
-              .onHover((isHover: boolean) => {
-                this.filterHovered = isHover ? option.value : -1;
-              })
-              .onTouch((event: TouchEvent) => {
-                if (event.type === TouchType.Down) {
-                  this.filterPressed = option.value;
-                } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-                  this.filterPressed = -1;
-                }
-              })
-              .onClick(() => this.selectFilter(option.value))
-          }, (option: FilterOption) => `${option.value}`)
-        }
-        .padding({ left: 20, right: 20 })
-      }
-      .scrollable(ScrollDirection.Horizontal)
-      .scrollBar(BarState.Off)
-      .edgeEffect(EdgeEffect.None)
-      .width('100%')
-      .margin({ top: 8 })
 
       Row({ space: 12 }) {
         Text('排序')
@@ -1061,6 +1019,7 @@ export struct StreamHome {
         .layoutWeight(1)
         .edgeEffect(EdgeEffect.None)
         .scrollBar(BarState.Off)
+        .padding({ bottom: this.bottomReserve })
         .onReachEnd(() => {
           this.loadMore();
         })
@@ -1241,7 +1200,7 @@ export struct StreamHome {
       }
 
       Flex({ wrap: FlexWrap.Wrap }) {
-        if (this.filter === StreamFilter.TRASH) {
+        if (this.appState.homeFilter === StreamFilter.TRASH) {
           this.ActionChip(() => '恢复', false, () => {
             this.restoreItems(this.appState.selectedBookmarkIds.slice());
           })
@@ -1314,7 +1273,7 @@ export struct StreamHome {
         .fontColor($r('app.color.ink_secondary'))
         .textAlign(TextAlign.Center)
         .lineHeight(21)
-      if (this.filter !== StreamFilter.TRASH) {
+      if (this.appState.homeFilter !== StreamFilter.TRASH) {
         Row({ space: 12 }) {
           Text('收第一笺')
             .fontSize(13)
@@ -1350,7 +1309,7 @@ export struct StreamHome {
     if (this.keyword.length > 0) {
       return '没有找到';
     }
-    if (this.filter === StreamFilter.TRASH) {
+    if (this.appState.homeFilter === StreamFilter.TRASH) {
       return '回收站是空的';
     }
     return '纸还空着';
@@ -1360,7 +1319,7 @@ export struct StreamHome {
     if (this.keyword.length > 0) {
       return '换个词，或去标签里翻翻。';
     }
-    if (this.filter === StreamFilter.TRASH) {
+    if (this.appState.homeFilter === StreamFilter.TRASH) {
       return '删掉的笺会在这里留 30 天。';
     }
     return '收下第一条链接，纸就有了内容。';

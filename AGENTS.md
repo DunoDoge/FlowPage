@@ -67,22 +67,56 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   `notify()`（`setLinkStatus` 与同步内部方法除外）。直接调 `BookmarkDao` 不会刷新 UI，也不会推送卡片。
   新写入口必须走 Repository，或在末尾补 `notify()`。
 - `AppState.openBookmark()` 写 `routeTick` 触发手机端 push `detail`；`onContinue` 只携带当前 `selectedId`。
-- 宽屏三栏仅 `width>=1000vp` 显示 `SideNav`（文件为 `components/NavigationRail.ets`）；`700–999vp` 为两栏；手机为 `Navigation` 栈。
-- 品牌文字只由主页头部承载（34fp「流笺」+ 副题），全断点同一结构；侧边栏 `SideNav` 无品牌块、
-  与抽屉同用 `components/NavList.ets`（唯一渲染源：`NAV_ITEMS` 四项导航、`TOP_INSET=26` 顶部留白、
-  20vp 标签缩进、导航行按压阴影反馈）。☰ 为 `SymbolGlyph` 图标按状态映射：停靠栏展开显
-  `sys.symbol.open_sidebar`、收起显 `sys.symbol.close_sidebar`（≥1000vp 切换 `AppState.sideNavOpen`，
-  默认展开，收起时拖拽书签自动展开），<1000vp 恒 `open_sidebar` 并打开左侧抽屉（面板常驻挂载，
+- 断点矩阵：<700vp 手机壳 = `Navigation` 栈（只 push `detail`）包裹底部悬浮页签 `HdsTabs`；700–999vp 两栏 =
+  左栏 `StreamHome` 单实例 + 右栏 `HdsTabs`（页签只切右栏，左栏滚动/筛选/选中不因切换重建）；≥1000vp 三栏 =
+  停靠 `SideNav`（`components/NavigationRail.ets`），无页签。页签与停靠栏导航同源 `common/Constants.ets`
+  的 `NAV_ITEMS`（label/pane/icon 一份定义，页签 `SymbolGlyph`+文字、停靠栏纯文字）。
+- `AppState.pane` 仍是目的地唯一事实源：`Index.activeTabIndex` 是喂给 `Tabs` 的影子下标，由
+  `@Monitor('appState.pane')` 推导；`Tabs.onChange` 只写 `goPane()`。页签内容走「首次激活再挂载」惰性门控
+  （`visitedTabs`），挂载后常驻。`openPane()` 只写 pane 不碰导航栈；系统返回在导航栈空且 pane 非
+  `DETAIL` 时回到流笺页签（<1000vp 生效）。tags/sync/settings 是页签目的地，不再是导航栈子页；
+  `PageHeader` 只剩 trailing 状态槽（无返回/☰）。
+- 品牌文字只由主页头部承载（34fp「流笺」），全断点同一结构；<1000vp 头部与页签页同构（`PageHeader` +
+  34fp 标题，标题顶边跨页对齐——真机反馈修订），计数副题「N 条 · 今天收下 N 条」位于 `PageHeader`
+  trailing 状态槽（与「N 个标签/已连接/v1.0.0」同位），≥1000vp 随 ☰ 行 trailing；收笺按钮与标题顶对齐
+  （`VerticalAlign.Top`，底对齐会因按钮 44vp 高于标题把标题顶边压低约 3.5vp，实测）。侧边栏 `SideNav` 无品牌块、四项导航
+  仍由 `components/NavList.ets` 渲染（`NAV_ITEMS` 同源、`TOP_INSET=26` 顶部留白、20vp 标签缩进、按压
+  surface_alt 反馈；`showItems=false` 时仅渲染 26vp spacer——空 Column 会被算成 0 高，必须显式
+  `.height(TOP_INSET)`）。☰ 仅存在于 ≥1000vp 主页头部，为 `SymbolGlyph` 图标按状态映射：展开显
+  `sys.symbol.open_sidebar`、收起显 `sys.symbol.close_sidebar`（切换 `AppState.sideNavOpen`，
+  默认展开，收起时拖拽书签自动展开）；<1000vp 资料库入口为悬浮页签迷你栏（见「悬浮页签」条），图标同一状态
+  映射。抽屉面板常驻挂载，
   `translate`/`opacity` 隐式动画：面板 240ms 推入、内容延迟 100ms 跟进，收起不延迟；≥1000vp 停靠栏
-  按宽度过渡推挤内容区）。勿改回条件渲染 + `transition`（实测面板本体不动画）；关闭态须逐层 gate：
+  按宽度过渡推挤内容区。勿改回条件渲染 + `transition`（实测面板本体不动画）；关闭态须逐层 gate：
   `HitTestMode.None` 只关自身不关子节点，根/全屏遮罩各设 None、面板另加 `enabled(false)`，
-  根再 `accessibilityLevel('no-hide-descendants')`，否则透明遮罩会吞掉 ☰ 点击；
-  无障碍标签按动作（展开/收起/打开侧边栏）。
-- 手机导航栈子页（tags/sync/settings）页头用 `components/PageHeader.ets`（可选返回 + 可选 ☰，
-  ☰ 仅窄屏渲染，detail 页不接入）；经抽屉切 pane 走 `openPane()` 清栈再进（流笺=`clear`，
-  其余=`clear`+push，与 `showDetailOnPhone` 同构），系统返回必回主页流。能力规格见
-  `openspec/specs/navigation-shell/`、`openspec/specs/interaction-feedback/`。
-- 主页头部不放统计条/批量/粘贴：「批量」在排序行行尾（`BatchButton`，全断点同位）；剪贴板粘贴入口在收笺
+  根再 `accessibilityLevel('no-hide-descendants')`，否则透明遮罩会吞掉迷你栏点击；
+  无障碍标签按动作（展开/收起侧边栏、打开/收起资料库抽屉）。
+- 抽屉与停靠栏都是「资料库」：<1000vp 抽屉只含智能视图（`components/SmartViews.ets`，全部/未读/星标/
+  归档/回收站 + 计数，写 `appState.homeFilter`）+ 文件夹树，无目的地导航；≥1000vp 停靠栏依次为四项导航、
+  智能视图、文件夹树、标签分区（`components/TagSection.ets`，空标签集整块隐藏）与同步摘要
+  （`components/SyncSection.ets`），均随 `refreshTick` 刷新。`appState.homeFilter` 是筛选唯一所有权
+  （StreamHome 无本地 filter，`@Monitor('appState.homeFilter')` 负责退批量、关弹层、重载）。
+  资料库查询必须等 `AppState.libraryReady`（仓库 init 完成后置位，否则 `Database.getStore()` 抛错被吞、
+  界面停留 0 计数/加载态）；抽屉侧首查再推迟到抽屉首次打开（`deferUntilDrawerOpen`/`docked=false` +
+  `folderDrawerOpen` 门控），停靠栏 eager——启动查询窗口让给首页首屏（真机实测树查询会压后列表首绘）。
+- 悬浮页签：载体为 `@kit.UIDesignKit` 的 `HdsTabs`（`import { HdsTabs, HdsTabsFloatingStyle, hdsMaterial }
+  from '@kit.UIDesignKit'`；<700vp 嵌在 `Navigation` 内、700–999vp 嵌在右栏 `Row` 内，嵌套原型已验证）。
+  `systemMaterialEffect` 用 ADAPTIVE 档（PC/2in1 免 `getSystemMaterialTypes()` 查询），材质只作用于页签栏
+  与迷你栏背板；`barBottomMargin` 显式 0——页签紧贴底部导航避让区上缘，系统默认间距在真机上偏高，勿改回。
+  自定义 `tabBar` 必须直调 `this.TabBarItem(n)`——箭头包装会丢 UI 上下文导致 item 渲染为空（实测，
+  HdsTabs 下同）；`HdsTabsAttribute.barHeight` 只有单参数版本。<1000vp 配置资料库迷你栏（design D12）：
+  纯图标 26fp、无文字（真机反馈），图标镜像抽屉状态——开显 `open_sidebar`、关显 `close_sidebar`（与 ☰
+  状态映射同口径，真机反馈校准，勿按动作反着映射），点击开合切换抽屉，热区 ≥44vp。迷你栏固定圆形：HdsTabs
+  宽度 >600vp（折叠屏）初始为展开样式并向 328vp 上限膨胀，须 `miniBarStyle: COLLAPSE` +
+  `miniBarWidth` 三档全钉 56（= 页签栏高）——样式参数仅 <600vp 生效，宽度钉住覆盖其余分档（真机反馈）。批量态隐藏：
+  `barHeight(0)` + `barFloatingStyle` 传 `undefined` 取消悬浮样式（`HdsTabsController.applyHideAnimation`
+  是瞬态滚动/点击 API、不适配持久批量态，已否决）；`barHeight` 最小高度限制会残留约 7.5vp 空条，
+  无蒙层无内容，属可接受残留（兜底方案见 design.md D8）。页签可见时其下可滚动内容需预留
+  `TAB_BOTTOM_RESERVE=88` 底部内边距（StreamHome/TagsPage/SyncPage/SettingsPage/DetailContent 的
+  `bottomReserve` 参数，仅页签宿主传入）。能力规格见
+  `openspec/specs/navigation-shell/`、`openspec/specs/library-sidebar/`、`openspec/specs/interaction-feedback/`。
+- 主页头部不放统计条/批量/粘贴/筛选：「批量」在排序行行尾（`BatchButton`，全断点同位）；主页**没有**筛选
+  chips 行（真机反馈后移除），智能视图是主列表筛选唯一入口；剪贴板粘贴入口在收笺
   面板（`InboxSheet`）URL 行内的 `PasteButton`（安全组件，点击即获读取授权，读出首个 URL 回填输入框）。
 - 卡片在独立进程读取 preferences，`CardSnapshot.open()` 必须先
   `removePreferencesFromCacheSync`，否则读到旧快照。`FlowRepository.notify()` 已做“写快照 + 推送”串行合并。
@@ -155,8 +189,8 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
 - 主 UI 统一 V2 装饰器；**只有** `entry/src/main/ets/widget/pages/` 的桌面卡片使用 V1
   `@Component` + `@LocalStorageProp`（FormKit 约束），不要混用。
 - 文件夹管理属主页：`FolderPanel` 挂在最左页面栏——≥1000vp 停靠在 `SideNav` 内（导航项下方，栏宽 280vp，
-  ☰ 可收起/展开，默认展开）；<1000vp 由 ☰ 打开左侧抽屉（遮罩，点外部/返回关闭，主页头部与
-  tags/sync/settings 页头均可开）。抽屉主导航同源 `NavList`，主页头部不放 标签/同步/设置，只剩 ☰。
+  ☰ 可收起/展开，默认展开）；<1000vp 由悬浮页签迷你栏打开左侧抽屉（遮罩，点外部/返回关闭，入口唯一）。
+  抽屉主导航同源 `NavList`，主页头部不放 标签/同步/设置，<1000vp 无 ☰ 只剩品牌块，≥1000vp 保留 ☰。
   树的展开集合、滚动位置与抽屉开合在
   `AppState`；跨列多选与拖拽会话也走 `AppState` / `FolderDragSession`，投放由侧栏直接提交。点树行把流过滤到
   该文件夹的**直属书签**（`BookmarkQuery.folderId` 等值，子文件夹内容经其行下钻；树行计数仍含全部子孙）。
@@ -169,7 +203,8 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   只用稳定 id 作键时数据源替换会复用旧行、名称/计数停在旧值，直到页面重建才更新。现有示例见
   `FolderPanel` 树行、`StreamHome` 书签行（含 `rev|updatedAt`）与 `TagsPage` 标签行；往行内加新可变字段时同步加入键值。
   嵌套 `ForEach` 时外层键也必须随内层可见内容变化，否则外层行复用、内层不会重建。
-- 图标一律 `SymbolGlyph` + `sys.symbol.*`（☰=`open_sidebar`/`close_sidebar`、加=`plus`、更多=`more`、
+- 图标一律 `SymbolGlyph` + `sys.symbol.*`（☰ 与资料库迷你栏图标按状态映射 `open_sidebar`/`close_sidebar`
+  ——展开/打开显 open、收起显 close，真机反馈校准勿反；加=`plus`、更多=`more`、
   关=`xmark`；资源名以 SDK `ets-loader/sysResource.js` symbol 组为准，勿凭记忆猜名）。`SymbolGlyph.fontColor`
   只收 `Array<ResourceColor>`（`[$r(...)]`）。hover/按压反馈用 `onHover((isHover: boolean)=>…)` 与
   `onTouch` Down/Up/Cancel 驱动 `@Local`，条件切换 `surface_alt` 背景（`hdsEffect.pressShadow`

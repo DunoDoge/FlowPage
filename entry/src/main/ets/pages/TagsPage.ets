@@ -6,9 +6,9 @@ import { PageHeader } from '../components/PageHeader';
 
 @ComponentV2
 export struct TagsPage {
-  @Param showBack: boolean = false;
-  @Param showMenu: boolean = false;
-  @Event onBack: () => void = () => {};
+  // Extra bottom inset for the floating tab bar; zero when hosted outside
+  // the tabs (>=1000vp right pane).
+  @Param bottomReserve: number = 0;
   @Local appState: AppState = AppState.shared;
   @Local tags: TagCount[] = [];
   @Local editingId: string = '';
@@ -39,7 +39,6 @@ export struct TagsPage {
   private pick(tag: TagCount): void {
     this.appState.tagFilter = tag.name;
     this.appState.goPane(Pane.DETAIL);
-    this.onBack();
   }
 
   private startEdit(tag: TagCount): void {
@@ -149,11 +148,6 @@ export struct TagsPage {
   build() {
     Column() {
       PageHeader({
-        showBack: this.showBack,
-        showMenu: this.showMenu,
-        onBack: () => {
-          this.onBack();
-        },
         trailing: () => {
           this.HeaderTrailing()
         }
@@ -228,7 +222,7 @@ export struct TagsPage {
         }
         .width('100%')
         .layoutWeight(1)
-        .padding({ left: 20, right: 20 })
+        .padding({ left: 20, right: 20, bottom: this.bottomReserve })
         .edgeEffect(EdgeEffect.None)
         .scrollBar(BarState.Off)
       }

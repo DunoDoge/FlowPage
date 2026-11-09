@@ -18,6 +18,10 @@ export class AppState {
   @Trace routeTick: number = 0;
   @Trace routeId: string = '';
   @Trace refreshTick: number = 0;
+  // Flips once the repository finished init; library surfaces defer their
+  // first query until then (cold-start queries used to race the DB open and
+  // surfaced as zero counts / an empty tree until the next refresh tick).
+  @Trace libraryReady: boolean = false;
   @Trace toastText: string = '';
   @Trace tagFilter: string = '';
   @Trace folderFilter: string = '';

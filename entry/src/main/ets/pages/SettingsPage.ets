@@ -15,9 +15,9 @@ const READ_CHUNK: number = 262144;
 
 @ComponentV2
 export struct SettingsPage {
-  @Param showBack: boolean = false;
-  @Param showMenu: boolean = false;
-  @Event onBack: () => void = () => {};
+  // Extra bottom inset for the floating tab bar; zero when hosted outside
+  // the tabs (>=1000vp right pane).
+  @Param bottomReserve: number = 0;
   @Local appState: AppState = AppState.shared;
   @Local summary: LibrarySummary = new LibrarySummary();
   @Local themeMode: string = 'system';
@@ -265,11 +265,6 @@ export struct SettingsPage {
   build() {
     Column() {
       PageHeader({
-        showBack: this.showBack,
-        showMenu: this.showMenu,
-        onBack: () => {
-          this.onBack();
-        },
         trailing: () => {
           this.HeaderTrailing()
         }
@@ -434,7 +429,7 @@ export struct SettingsPage {
           .width('100%')
           .alignItems(HorizontalAlign.Start)
         }
-        .padding({ left: 20, right: 20, top: 18, bottom: 40 })
+        .padding({ left: 20, right: 20, top: 18, bottom: 40 + this.bottomReserve })
       }
       .layoutWeight(1)
       .scrollBar(BarState.Off)

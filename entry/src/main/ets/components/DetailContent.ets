@@ -22,6 +22,9 @@ export struct DetailContent {
   @Param bookmarkId: string = '';
   @Param showBack: boolean = false;
   @Param compact: boolean = false;
+  // Extra bottom inset when hosted inside the floating tab bar (700–999vp
+  // right pane); the phone detail covers the bar, so it stays 0 there.
+  @Param bottomReserve: number = 0;
   @Event onBack: () => void = () => {};
   @Event onRemoved: () => void = () => {};
 
@@ -650,7 +653,7 @@ export struct DetailContent {
           }
           .width('100%')
           .constraintSize({ maxWidth: 680 })
-          .padding({ left: this.compact ? 20 : 32, right: this.compact ? 20 : 32, bottom: 48 })
+          .padding({ left: this.compact ? 20 : 32, right: this.compact ? 20 : 32, bottom: 48 + this.bottomReserve })
           .alignItems(HorizontalAlign.Start)
         }
         .width('100%')

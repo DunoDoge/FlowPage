@@ -30,6 +30,9 @@ export struct FolderPanel {
   @Local dragSession: FolderDragSession = FolderDragSession.shared;
   @Local rows: PanelRow[] = [];
   @Local loading: boolean = true;
+  // Set on the first load; drawer copies start false so cold-start refresh
+  // ticks do not queue tree queries before the drawer ever opens.
+  private loaded: boolean = false;
   @Local menuId: string = '';
   @Local editingId: string = '';
   @Local draftName: string = '';
@@ -42,7 +45,6 @@ export struct FolderPanel {
   @Local dropTargetId: string = '';
   @Local rootHover: boolean = false;
   private nodes: FolderNode[] = [];
-  private liveIds: string[] = [];
   private scroller: Scroller = new Scroller();
   private panelTop: number = 0;
   private panelBottom: number = 0;
@@ -52,11 +54,36 @@ export struct FolderPanel {
   private dropBusy: boolean = false;
 
   aboutToAppear(): void {
-    this.load();
+    // Rail copy (docked) loads eagerly; the drawer copy defers its first
+    // query until the drawer opens so cold start stays free for the first
+    // stream page. Queries before repository init throw and would strand
+    // the spinner, hence the libraryReady gate as well.
+    if (this.docked && this.appState.libraryReady) {
+      this.load();
+    }
+  }
+
+  @Monitor('appState.libraryReady')
+  onLibraryReady(): void {
+    if (this.appState.libraryReady && this.docked) {
+      this.load();
+    }
+  }
+
+  @Monitor('appState.folderDrawerOpen')
+  onDrawerOpenChanged(): void {
+    if (!this.docked && this.appState.folderDrawerOpen && !this.loaded) {
+      if (this.appState.libraryReady) {
+        this.load();
+      }
+    }
   }
 
   @Monitor('appState.refreshTick')
   onLibraryChanged(): void {
+    if (!this.loaded) {
+      return;
+    }
     if (this.dragSession.active) {
       this.pendingRefresh = true;
       return;
@@ -79,6 +106,7 @@ export struct FolderPanel {
   }
 
   private async load(): Promise<void> {
+    this.loaded = true;
     this.loadGeneration = this.loadGeneration + 1;
     const generation = this.loadGeneration;
     this.loading = true;
@@ -95,7 +123,6 @@ export struct FolderPanel {
     this.loading = false;
     const ids: string[] = [];
     this.collectIds(nodes, ids);
-    this.liveIds = ids;
     this.pruneExpanded(ids);
     if (this.appState.folderFilter.length > 0 && ids.indexOf(this.appState.folderFilter) < 0) {
       this.appState.folderFilter = '';

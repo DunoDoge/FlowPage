@@ -11,9 +11,9 @@ import { PageHeader } from '../components/PageHeader';
 
 @ComponentV2
 export struct SyncPage {
-  @Param showBack: boolean = false;
-  @Param showMenu: boolean = false;
-  @Event onBack: () => void = () => {};
+  // Extra bottom inset for the floating tab bar; zero when hosted outside
+  // the tabs (>=1000vp right pane).
+  @Param bottomReserve: number = 0;
   @Local appState: AppState = AppState.shared;
   @Local summary: LibrarySummary = new LibrarySummary();
   @Local configUrl: string = '';
@@ -231,11 +231,6 @@ export struct SyncPage {
   build() {
     Column() {
       PageHeader({
-        showBack: this.showBack,
-        showMenu: this.showMenu,
-        onBack: () => {
-          this.onBack();
-        },
         trailing: () => {
           this.HeaderTrailing()
         }
@@ -380,7 +375,7 @@ export struct SyncPage {
 
           this.ConflictPanel()
         }
-        .padding({ left: 20, right: 20, bottom: 32 })
+        .padding({ left: 20, right: 20, bottom: 32 + this.bottomReserve })
       }
       .layoutWeight(1)
       .scrollBar(BarState.Off)
