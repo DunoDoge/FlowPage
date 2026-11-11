@@ -6,6 +6,7 @@ import { AppState } from '../common/AppState';
 import { BookmarkSource, ReadState } from '../common/Constants';
 import { domainOf, isSameUrl, normalizeUrl } from '../common/UrlUtil';
 import { decodeWebHtml } from '../common/WebHtmlCodec';
+import { AVOIDANCE_MARGIN_VP, sunkButtonAvoidance } from '../common/WindowChrome';
 import { ArticleExtractService } from '../core/service/ArticleExtractService';
 import { ArticleCodec } from '../core/service/ArticleCodec';
 import { ArticleDocument } from '../model/Article';
@@ -711,6 +712,13 @@ export struct ReadingShell {
     .backgroundColor($r('app.color.paper'))
   }
 
+  // Freeform: the sunk window buttons float over the top band of the
+  // full-window reading cover; keep the toolbar's trailing controls clear.
+  private toolbarAvoidance(): number {
+    return sunkButtonAvoidance(this.appState.freeWindow, this.appState.titleButtonRight,
+      this.appState.titleButtonWidth, AVOIDANCE_MARGIN_VP);
+  }
+
   @Builder
   TopBar() {
     Column() {
@@ -774,7 +782,7 @@ export struct ReadingShell {
       }
       .width('100%')
       .height(52)
-      .padding({ left: this.compact ? 8 : 16, right: this.compact ? 8 : 16 })
+      .padding({ left: this.compact ? 8 : 16, right: (this.compact ? 8 : 16) + this.toolbarAvoidance() })
 
       if (this.isBrowserMode() && this.browserProgress > 0 && this.browserProgress < 100) {
         Stack({ alignContent: Alignment.Start }) {

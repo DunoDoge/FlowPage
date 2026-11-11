@@ -45,7 +45,7 @@ export class NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { label: '流笺', pane: Pane.DETAIL, icon: $r('sys.symbol.house') },
+  { label: '笺流', pane: Pane.DETAIL, icon: $r('sys.symbol.house') },
   { label: '标签', pane: Pane.TAGS, icon: $r('sys.symbol.label') },
   { label: '同步', pane: Pane.SYNC, icon: $r('sys.symbol.arrow_2_circlepath') },
   { label: '设置', pane: Pane.SETTINGS, icon: $r('sys.symbol.gearshape') }

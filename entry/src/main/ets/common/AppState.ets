@@ -1,4 +1,5 @@
 import { common } from '@kit.AbilityKit';
+import { window } from '@kit.ArkUI';
 import { Pane } from './Constants';
 import { ReadingSeed } from '../model/ReadingEntry';
 
@@ -45,6 +46,19 @@ export class AppState {
   @Trace readingBackTick: number = 0;
   @Trace readingCanGoBack: boolean = false;
   readingSeed: ReadingSeed = new ReadingSeed();
+  // Freeform window chrome, wired by EntryAbility from window decor events;
+  // the title strip and the three-button avoidance consume them.
+  @Trace freeWindow: boolean = false;
+  @Trace windowStatus: window.WindowStatusType = window.WindowStatusType.UNDEFINED;
+  // Sunk window-button rect relative to the window's top-right corner.
+  @Trace titleButtonRight: number = 0;
+  @Trace titleButtonWidth: number = 0;
+  // Stream count mirrors written by StreamHome.load() (single writer: the
+  // stream loader); the freeform title strip renders the same
+  // "N 条 · 今天收下 N 条" status from these.
+  @Trace streamLoading: boolean = true;
+  @Trace streamTotal: number = 0;
+  @Trace streamTodayCount: number = 0;
   // Ability contexts are published once at startup so pages never cast getContext().
   abilityContext: common.UIAbilityContext | undefined = undefined;
   shareContext: common.UIExtensionContext | undefined = undefined;

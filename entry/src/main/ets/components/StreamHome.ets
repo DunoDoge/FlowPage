@@ -8,6 +8,7 @@ import { LibrarySummary, BatchImpact, BatchOutcome, FlowRepository } from '../re
 import { BookmarkRow } from './BookmarkRow';
 import { FolderPicker } from './FolderPicker';
 import { PageHeader } from './PageHeader';
+import { SubtitleStatus } from './SubtitleStatus';
 
 // Filter switching lives in the library sidebar smart views only; the home
 // body has no chip row (real-device feedback revision, task 7.1).
@@ -141,6 +142,7 @@ export struct StreamHome {
     const generation = this.loadGeneration;
     const repo = FlowRepository.get();
     this.loading = true;
+    this.appState.streamLoading = true;
     try {
       if (this.appState.folderFilter.length > 0) {
         const folder = await repo.getFolder(this.appState.folderFilter);
@@ -167,11 +169,13 @@ export struct StreamHome {
         return;
       }
       this.summary = summary;
+      this.appState.streamTotal = summary.total;
       const todayCount = await repo.countToday();
       if (generation !== this.loadGeneration) {
         return;
       }
       this.todayCount = todayCount;
+      this.appState.streamTodayCount = todayCount;
     } catch (error) {
       if (generation === this.loadGeneration) {
         AppState.shared.toast('没有读到本地数据');
@@ -179,6 +183,7 @@ export struct StreamHome {
     } finally {
       if (generation === this.loadGeneration) {
         this.loading = false;
+        this.appState.streamLoading = false;
       }
     }
   }
@@ -675,18 +680,13 @@ export struct StreamHome {
     }
   }
 
-  private subtitle(): string {
-    if (this.loading) {
-      return '正在翻开…';
-    }
-    return `${this.summary.total} 条 · 今天收下 ${this.todayCount} 条`;
-  }
-
   @Builder
-  SubtitleStatus() {
-    Text(this.subtitle())
-      .fontSize(12)
-      .fontColor($r('app.color.ink_tertiary'))
+  CountTrailing() {
+    SubtitleStatus({
+      loading: this.loading,
+      total: this.summary.total,
+      todayCount: this.todayCount
+    })
   }
 
   @Builder
@@ -749,11 +749,15 @@ export struct StreamHome {
     Column() {
       // >=1000vp only: the hamburger toggles the docked rail. Below that
       // breakpoint the floating mini bar owns the library entry (design
-      // D12), so the header carries no drawer button at all. The glyph
-      // sits in a centered Stack: a sized SymbolGlyph paints its background
-      // on the placeholder box, which does not follow the glyph anchor and
-      // reads as misaligned.
-      if (this.folderDocked) {
+      // D12), so the header carries no drawer button at all. In a freeform
+      // window the title strip absorbs this whole row -- hamburger and
+      // trailing count alike (design D4) -- but the 44vp band stays as an
+      // empty placeholder so the brand title keeps the vertical offset the
+      // full header produced.
+      // The glyph sits in a centered Stack: a sized SymbolGlyph paints its
+      // background on the placeholder box, which does not follow the glyph
+      // anchor and reads as misaligned.
+      if (this.folderDocked && !this.appState.freeWindow) {
         Row() {
           Stack({ alignContent: Alignment.Center }) {
             SymbolGlyph(this.appState.sideNavOpen
@@ -784,19 +788,30 @@ export struct StreamHome {
             this.appState.sideNavOpen = !this.appState.sideNavOpen;
           })
           Blank()
-          this.SubtitleStatus()
+          this.CountTrailing()
         }
         .width('100%')
         .padding({ left: 20, right: 20 })
-      } else {
+      } else if (!this.folderDocked) {
         // Mirror the tab pages' PageHeader anatomy so the 34fp brand title
         // top-aligns with the destination titles; the count status takes
         // the same trailing slot as "N 个标签" / "已连接".
         PageHeader({
+          // A custom component constructor inside this lambda runs outside
+          // the component-creation context and throws "class constructor
+          // cannot called without 'new'" (crash on phone-breakpoint mount).
+          // Route through a @Builder method, matching HeaderTrailing usage
+          // in Tags/Sync/Settings pages.
           trailing: () => {
-            this.SubtitleStatus()
+            this.CountTrailing()
           }
         })
+      } else {
+        // Freeform docked: the strip took the hamburger row over. Reserve the
+        // PageHeader status band (12vp padding + 12fp status line ~= 26vp) so
+        // the 34fp brand title top-aligns with the destination page titles
+        // rendered in the pane column (the <1000vp alignment delta).
+        Row().height(26)
       }
 
       // The home header carries the brand on every breakpoint; the docked

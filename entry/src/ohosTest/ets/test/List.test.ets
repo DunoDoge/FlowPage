@@ -14,6 +14,7 @@ import importTest from './Import.test'
 import folderTest from './Folder.test'
 import folderDropTest from './FolderDrop.test'
 import folderHomeTest from './FolderHome.test'
+import windowChromeTest from './WindowChrome.test'
 
 export default function testsuite() {
   webDavXmlTest()
@@ -32,4 +33,5 @@ export default function testsuite() {
   folderTest()
   folderDropTest()
   folderHomeTest()
+  windowChromeTest()
 }

@@ -4,6 +4,7 @@ import { mediaquery } from '@kit.ArkUI';
 import { HdsTabs, HdsTabsFloatingStyle, HdsBarStyle, hdsMaterial } from '@kit.UIDesignKit';
 import { AppState } from '../common/AppState';
 import { NAV_ITEMS, Pane } from '../common/Constants';
+import { showStrip, STRIP_HEIGHT_VP } from '../common/WindowChrome';
 import { FolderDragSession } from '../common/FolderDragSession';
 import { Bookmark } from '../model/Bookmark';
 import { FlowRepository } from '../repository/FlowRepository';
@@ -14,6 +15,7 @@ import { DetailContent } from '../components/DetailContent';
 import { InboxSheet } from '../components/InboxSheet';
 import { SideNav } from '../components/NavigationRail';
 import { NavList } from '../components/NavList';
+import { WindowTitleBar } from '../components/WindowTitleBar';
 import { TagsPage } from './TagsPage';
 import { SyncPage } from './SyncPage';
 import { SettingsPage } from './SettingsPage';
@@ -370,58 +372,76 @@ struct Index {
   }
 
   build() {
-    Stack({ alignContent: Alignment.Bottom }) {
-      if (!this.ready) {
-        Column() {
-          Text('流笺')
-            .fontSize(12)
-            .fontColor($r('app.color.ink_tertiary'))
-            .letterSpacing(2)
+    Column() {
+      // Persistent shell: the strip toggles as a child instead of swapping
+      // root branches, so floating/fullscreen/maximize switches never
+      // rebuild the Stack subtree (scroll, keyword, drawer state survive).
+      if (this.stripVisible()) {
+        WindowTitleBar({ isLarge: this.isLarge })
+      }
+      Stack({ alignContent: Alignment.Bottom }) {
+        if (!this.ready) {
+          Column() {
+            Text('流笺')
+              .fontSize(12)
+              .fontColor($r('app.color.ink_tertiary'))
+              .letterSpacing(2)
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+        } else if (this.isWide) {
+          this.WideShell()
+        } else {
+          this.PhoneShell()
         }
-        .width('100%')
-        .height('100%')
-        .justifyContent(FlexAlign.Center)
-      } else if (this.isWide) {
-        this.WideShell()
-      } else {
-        this.PhoneShell()
-      }
 
-      if (!this.isLarge) {
-        this.FolderDrawer()
-      }
+        if (!this.isLarge) {
+          this.FolderDrawer()
+        }
 
-      if (this.appState.showInbox) {
-        InboxSheet()
-      }
+        if (this.appState.showInbox) {
+          InboxSheet()
+        }
 
-      if (this.appState.toastText.length > 0) {
-        Text(this.appState.toastText)
-          .fontSize(13)
-          .fontColor($r('app.color.inverse_ink'))
-          .backgroundColor($r('app.color.ink'))
-          .borderRadius(999)
-          .padding({ left: 18, right: 18, top: 9, bottom: 9 })
-          .margin({ bottom: 64 })
+        if (this.appState.toastText.length > 0) {
+          Text(this.appState.toastText)
+            .fontSize(13)
+            .fontColor($r('app.color.inverse_ink'))
+            .backgroundColor($r('app.color.ink'))
+            .borderRadius(999)
+            .padding({ left: 18, right: 18, top: 9, bottom: 9 })
+            .margin({ bottom: 64 })
+        }
       }
+      .width('100%')
+      .height(this.rootStackHeight())
+      .backgroundColor($r('app.color.paper'))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .bindContentCover(this.appState.readingOpen, this.ReadingCover(), {
+        enableSafeArea: true,
+        onWillDismiss: (action: DismissContentCoverAction) => {
+          if (this.appState.readingCanGoBack && action.reason === DismissReason.PRESS_BACK) {
+            this.appState.requestReadingBack();
+          } else {
+            action.dismiss();
+          }
+        },
+        onDisappear: () => {
+          this.appState.closeReading();
+        }
+      })
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.paper'))
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
-    .bindContentCover(this.appState.readingOpen, this.ReadingCover(), {
-      enableSafeArea: true,
-      onWillDismiss: (action: DismissContentCoverAction) => {
-        if (this.appState.readingCanGoBack && action.reason === DismissReason.PRESS_BACK) {
-          this.appState.requestReadingBack();
-        } else {
-          action.dismiss();
-        }
-      },
-      onDisappear: () => {
-        this.appState.closeReading();
-      }
-    })
+  }
+
+  private stripVisible(): boolean {
+    return showStrip(this.appState.freeWindow, this.appState.windowStatus);
+  }
+
+  private rootStackHeight(): string {
+    return this.stripVisible() ? `calc(100% - ${STRIP_HEIGHT_VP}vp)` : '100%';
   }
 
   @Builder

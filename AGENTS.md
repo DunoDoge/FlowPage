@@ -70,7 +70,8 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
 - 断点矩阵：<700vp 手机壳 = `Navigation` 栈（只 push `detail`）包裹底部悬浮页签 `HdsTabs`；700–999vp 两栏 =
   左栏 `StreamHome` 单实例 + 右栏 `HdsTabs`（页签只切右栏，左栏滚动/筛选/选中不因切换重建）；≥1000vp 三栏 =
   停靠 `SideNav`（`components/NavigationRail.ets`），无页签。页签与停靠栏导航同源 `common/Constants.ets`
-  的 `NAV_ITEMS`（label/pane/icon 一份定义，页签 `SymbolGlyph`+文字、停靠栏纯文字）。
+  的 `NAV_ITEMS`（label/pane/icon 一份定义，页签 `SymbolGlyph`+文字、停靠栏纯文字；首项 label 为「笺流」，
+  区别于品牌标题「流笺」，真机反馈更名）。
 - `AppState.pane` 仍是目的地唯一事实源：`Index.activeTabIndex` 是喂给 `Tabs` 的影子下标，由
   `@Monitor('appState.pane')` 推导；`Tabs.onChange` 只写 `goPane()`。页签内容走「首次激活再挂载」惰性门控
   （`visitedTabs`），挂载后常驻。`openPane()` 只写 pane 不碰导航栈；系统返回在导航栈空且 pane 非
@@ -78,11 +79,13 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   `PageHeader` 只剩 trailing 状态槽（无返回/☰）。
 - 品牌文字只由主页头部承载（34fp「流笺」），全断点同一结构；<1000vp 头部与页签页同构（`PageHeader` +
   34fp 标题，标题顶边跨页对齐——真机反馈修订），计数副题「N 条 · 今天收下 N 条」位于 `PageHeader`
-  trailing 状态槽（与「N 个标签/已连接/v1.0.0」同位），≥1000vp 随 ☰ 行 trailing；收笺按钮与标题顶对齐
+  trailing 状态槽（与「N 个标签/已连接/v1.0.0」同位），≥1000vp 随 ☰ 行 trailing（自由窗时 ☰ 与计数迁至
+  窗口标题条，见「自由窗窗口装饰」条）；收笺按钮与标题顶对齐
   （`VerticalAlign.Top`，底对齐会因按钮 44vp 高于标题把标题顶边压低约 3.5vp，实测）。侧边栏 `SideNav` 无品牌块、四项导航
   仍由 `components/NavList.ets` 渲染（`NAV_ITEMS` 同源、`TOP_INSET=26` 顶部留白、20vp 标签缩进、按压
   surface_alt 反馈；`showItems=false` 时仅渲染 26vp spacer——空 Column 会被算成 0 高，必须显式
-  `.height(TOP_INSET)`）。☰ 仅存在于 ≥1000vp 主页头部，为 `SymbolGlyph` 图标按状态映射：展开显
+  `.height(TOP_INSET)`）。☰ 仅存在于 ≥1000vp——自由窗在窗口标题条左缘（见「自由窗窗口装饰」条），
+  非自由窗在主页头部，为 `SymbolGlyph` 图标按状态映射：展开显
   `sys.symbol.open_sidebar`、收起显 `sys.symbol.close_sidebar`（切换 `AppState.sideNavOpen`，
   默认展开，收起时拖拽书签自动展开）；<1000vp 资料库入口为悬浮页签迷你栏（见「悬浮页签」条），图标同一状态
   映射。抽屉面板常驻挂载，
@@ -91,6 +94,24 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   `HitTestMode.None` 只关自身不关子节点，根/全屏遮罩各设 None、面板另加 `enabled(false)`，
   根再 `accessibilityLevel('no-hide-descendants')`，否则透明遮罩会吞掉迷你栏点击；
   无障碍标签按动作（展开/收起侧边栏、打开/收起资料库抽屉）。
+- 自由窗窗口装饰（2in1/平板自由多窗，`isInFreeWindowMode`）：`EntryAbility` 在 `loadContent` 后调
+  `setWindowDecorHeight(40)` → `setWindowDecorVisible(false)` → `setWindowTitleMoveEnabled(false)` →
+  `setWindowTitle` → `setDecorButtonStyle`（Stage 约束：必须 loadContent 生效后调），并挂
+  `freeWindowModeChange` / `windowStatusChange` / `windowTitleButtonRectChange` 三监听写 `AppState`
+  （挂载后同步读一次初值；rect 真值约 90ms 后由事件送达，init 的 0/0 陈旧值已被事件兜住）。标题条
+  `WindowTitleBar`（40vp paper）仅自由窗 FLOATING/MAXIMIZE 渲染——谓词 `showStrip` 与避让
+  `avoidanceWidth` / `sunkButtonAvoidance` 是 `common/WindowChrome.ets` 纯函数（设备端套件覆盖）。`Index`
+  根部为常驻 `Column`：条作条件子节点、根 `Stack` 高度在 `calc(100% - 40vp)` / `100%` 间切换，勿改回
+  双分支条件包裹（浮动↔最大化切换会销毁重建 Stack 子树丢滚动/筛选状态，实测否决）。拖拽面 `onTouch` Move
+  触发 `startMoving()`（每次触点一次、Up/Cancel 重置）；双击空白按 `windowStatus` 切 `maximize()` /
+  `recover()`，`maximize` 必须传 `MaximizePresentation.EXIT_IMMERSIVE`——默认 presentation 在设备上
+  映射 FULL_SCREEN(1)、条谓词假且 UI 不可恢复（真机修复）。≥1000vp 条左缘承载 ☰（状态映射同口径）、
+  尾部计数副题（数据源 `AppState.streamLoading/streamTotal/streamTodayCount` 镜像，单写者
+  `StreamHome.load()`）；StreamHome ☰ 行在自由窗整行让位、以 26vp 状态带占位保持品牌标题与右栏标题
+  顶边对齐（对齐差值与 <1000vp 实测一致）。右缘三键避让 = `rect.right + rect.width + 12vp`
+  （`getTitleButtonRect` 单位 vp，真机校准）；阅读层 TopBar 尾部同走 `sunkButtonAvoidance` 避让。深色
+  三键目检待 2in1 真机（`DecorButtonStyle` 未 pin colorMode，随系统主题）。能力规格见
+  `openspec/specs/window-chrome/`。
 - 抽屉与停靠栏都是「资料库」：<1000vp 抽屉只含智能视图（`components/SmartViews.ets`，全部/未读/星标/
   归档/回收站 + 计数，写 `appState.homeFilter`）+ 文件夹树，无目的地导航；≥1000vp 停靠栏依次为四项导航、
   智能视图、文件夹树、标签分区（`components/TagSection.ets`，空标签集整块隐藏）与同步摘要
