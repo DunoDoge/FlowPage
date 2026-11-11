@@ -161,8 +161,9 @@ struct Index {
   // Lazy mount gate (design risk mitigation): tab pages build on first
   // activation and then stay alive.
   @Local visitedTabs: boolean[] = [true, false, false, false];
-  // >=1000vp right column: the pane live at startup must appear without the
-  // entrance transition; any pane switch afterwards re-enables it.
+  // Startup-live panes (>=1000vp right column, <1000vp home tab) must
+  // appear without the entrance transition; any pane switch afterwards
+  // re-enables it.
   @Local paneSwitchedOnce: boolean = false;
   @Local tabHovered: number = -1;
   @Local tabPressed: number = -1;
@@ -591,12 +592,16 @@ struct Index {
           // column keeps its scroll and selection across switches.
           HdsTabs({ index: this.activeTabIndex, barPosition: BarPosition.End }) {
             TabContent() {
-              DetailContent({
-                bookmarkId: this.appState.selectedId,
-                compact: false,
-                bottomReserve: TAB_BOTTOM_RESERVE,
-                onRemoved: () => this.appState.clearSelection()
-              })
+              // Same as the phone home tab: startup-live pane without the
+              // first-screen entrance, replayed on every return switch.
+              PaneEntrance({ active: this.activeTabIndex === 0, animate: this.paneSwitchedOnce }) {
+                DetailContent({
+                  bookmarkId: this.appState.selectedId,
+                  compact: false,
+                  bottomReserve: TAB_BOTTOM_RESERVE,
+                  onRemoved: () => this.appState.clearSelection()
+                })
+              }
             }
             .tabBar(this.TabBarItem(0))
 
@@ -659,15 +664,20 @@ struct Index {
     Navigation(this.navStack) {
       HdsTabs({ index: this.activeTabIndex, barPosition: BarPosition.End }) {
         TabContent() {
-          StreamHome({
-            isWide: false,
-            folderDocked: false,
-            refreshKey: this.streamRefresh,
-            bottomReserve: this.phoneTabReserve(),
-            onOpen: (id: string) => this.openDetail(id),
-            onCompose: () => this.appState.openInbox(''),
-            onOpenPane: (pane: string) => this.openPane(pane)
-          })
+          // The home tab is a switch target too: it is live at startup
+          // (animate skips the first-screen entrance), and every later
+          // return replays the D11 entrance like tabs 1-3.
+          PaneEntrance({ active: this.activeTabIndex === 0, animate: this.paneSwitchedOnce }) {
+            StreamHome({
+              isWide: false,
+              folderDocked: false,
+              refreshKey: this.streamRefresh,
+              bottomReserve: this.phoneTabReserve(),
+              onOpen: (id: string) => this.openDetail(id),
+              onCompose: () => this.appState.openInbox(''),
+              onOpenPane: (pane: string) => this.openPane(pane)
+            })
+          }
         }
         .tabBar(this.TabBarItem(0))
 
