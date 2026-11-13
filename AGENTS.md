@@ -157,6 +157,16 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   `bindContentCover` 保持 `enableSafeArea: true`（阅读层零改动承接）。能力规格见 `openspec/specs/immersive-ui/`。
 - 删除语义：软删除 `deleted=1` 保留 30 天；彻底删除/过期清理会写 `tombstone`，同步先传墓碑再删远端文件。
   墓碑是“不复活”的唯一保障，任何清理路径都不能跳过 `addTombstone`。
+- **分享出**：三入口（书签行「…」面板「打开」后、批量栏仅选中书签>0、阅读层「⋯」菜单「复制链接」后）统一走
+  `common/ShareOut.ets`（单条 HYPERLINK 记录 + DETAIL 预览；多条聚合为一条 PLAIN_TEXT 记录、内容单行空格分隔
+  URL、DEFAULT 预览）。平台约束（真机实测）：系统分享不支持多条纯文本/链接记录分发——BATCH 批量通道仅对
+  File 记录有效（错误码 1003702001），QQ 把文本记录按整段 schema 解析（行内标题、换行均触发「schema不合法」），
+  备忘录只收首条、华为分享拒发多记录；故多条只能聚合单行文本。API 26 无面板 `close()`，`ShareOut.dismiss()` 落地
+  为 off('dismiss')+释放引用（幂等吞错），宿主 `aboutToDisappear` 收口。App Linking 收端基础设施已休眠预置：
+  `module.json5` 独立 skill（https + dunodoge.com + pathStartWith "s" + domainVerify）+ `EntryAbility` /s 路由进阅读层
+  + `ShareUtil.shareLinkOf/shareLinkTargetOf`；发端包装暂缓——待服务器 `/.well-known/applinking.json`（appIdentifier
+  6917619579162930870）与 `/s` 302 端点、AGC 应用链接发布上线后，ShareOut 两处 `link.url` 改回 `shareLinkOf(...)` 即启用。
+  能力规格见 `openspec/specs/share-out/`。
 - 上传竞态：PUT 前记录 `rev + updatedAt`，成功后仅当仍匹配才回填 ETag 并清 `dirty`；不匹配说明同步期间
   又被编辑，必须保持 dirty。
 - 传输层瞬时失败重试（`WebDavTransport.request()` 内，覆盖所有动词）：429/502/503/504 与 `NET_*` 网络错误
