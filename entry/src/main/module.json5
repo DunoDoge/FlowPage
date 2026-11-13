@@ -51,6 +51,22 @@
                 "host": "bookmark"
               }
             ]
+          },
+          {
+            "entities": [
+              "entity.system.browsable"
+            ],
+            "actions": [
+              "ohos.want.action.viewData"
+            ],
+            "uris": [
+              {
+                "scheme": "https",
+                "host": "dunodoge.com",
+                "pathStartWith": "s"
+              }
+            ],
+            "domainVerify": true
           }
         ]
       }

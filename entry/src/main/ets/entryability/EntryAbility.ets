@@ -4,6 +4,9 @@ import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { FlowRepository } from '../repository/FlowRepository';
 import { AppState } from '../common/AppState';
+import { shareLinkTargetOf } from '../common/ShareUtil';
+import { domainOf } from '../common/UrlUtil';
+import { ReadingMode, ReadingSeed } from '../model/ReadingEntry';
 import { STRIP_HEIGHT_VP } from '../common/WindowChrome';
 import { platformFailure } from '../common/PlatformError';
 
@@ -27,8 +30,22 @@ export default class EntryAbility extends UIAbility {
     if (uri !== undefined && uri.length > 0) {
       if (uri.startsWith('flowpage://bookmark/')) {
         AppState.shared.openBookmark(uri.substring('flowpage://bookmark/'.length));
-      } else if (uri.startsWith('http://') || uri.startsWith('https://')) {
-        AppState.shared.openInbox(uri);
+      } else {
+        // App Linking share links (https://dunodoge.com/s?u=…) open the
+        // wrapped URL straight into the reading layer; other http(s) URIs
+        // fall back to the inbox as before.
+        const target = shareLinkTargetOf(uri);
+        if (target.length > 0) {
+          const seed = new ReadingSeed();
+          seed.mode = ReadingMode.READER;
+          seed.url = target;
+          seed.title = domainOf(target);
+          seed.transient = true;
+          seed.autoLoad = true;
+          AppState.shared.openReading(seed);
+        } else if (uri.startsWith('http://') || uri.startsWith('https://')) {
+          AppState.shared.openInbox(uri);
+        }
       }
     }
   }

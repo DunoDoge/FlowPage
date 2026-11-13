@@ -9,7 +9,7 @@ import { FlowRepository } from '../../../main/ets/repository/FlowRepository';
 import { BookmarkSource, ReadState } from '../../../main/ets/common/Constants';
 import { HighlightSegment, highlightSegments } from '../../../main/ets/common/Highlight';
 import { splitIntoChunks } from '../../../main/ets/common/TextUtil';
-import { deepLinkTextOf, shareContentOf } from '../../../main/ets/common/ShareUtil';
+import { deepLinkTextOf } from '../../../main/ets/common/ShareUtil';
 import { CARD_FIELD_SEPARATOR, cardLineOf, cardTitleOf, parseCardLine, parseCardLines } from '../../../main/ets/common/CardFormat';
 import {
   CARD_KEY_CANDIDATES,
@@ -138,9 +138,8 @@ export default function repositoryTest() {
       expect(paragraphs.length).assertEqual(3);
     });
 
-    it('sharesOriginalUrlAndDeepLinkSeparately', 0, () => {
+    it('buildsDeepLinkTextWithIdAndTitle', 0, () => {
       const bookmark = Bookmark.create('https://example.com/share', '分享', BookmarkSource.MANUAL);
-      expect(shareContentOf(bookmark)).assertEqual('https://example.com/share');
       const deepLink = deepLinkTextOf(bookmark);
       expect(deepLink.indexOf('flowpage://bookmark/')).assertLargerOrEqual(0);
       expect(deepLink.indexOf(bookmark.id)).assertLargerOrEqual(0);

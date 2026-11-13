@@ -4,6 +4,7 @@ import { pasteboard } from '@kit.BasicServicesKit';
 import { WebNetErrorList, webview } from '@kit.ArkWeb';
 import { AppState } from '../common/AppState';
 import { BookmarkSource, ReadState } from '../common/Constants';
+import { ShareLink, ShareOut } from '../common/ShareOut';
 import { domainOf, isSameUrl, normalizeUrl } from '../common/UrlUtil';
 import { decodeWebHtml } from '../common/WebHtmlCodec';
 import { AVOIDANCE_MARGIN_VP, sunkButtonAvoidance } from '../common/WindowChrome';
@@ -63,6 +64,7 @@ export struct ReadingShell {
     this.browserActive = false;
     this.webMounted = false;
     this.appState.readingCanGoBack = false;
+    ShareOut.dismiss();
     if (this.compactTimer >= 0) {
       clearTimeout(this.compactTimer);
       this.compactTimer = -1;
@@ -516,6 +518,20 @@ export struct ReadingShell {
     }
   }
 
+  // Saved layers carry the bookmark description; transient pages share URL and
+  // title only, no saving required first (spec).
+  private shareCurrent(): void {
+    const entry = this.currentEntry();
+    if (entry.url.length === 0) {
+      return;
+    }
+    const link = new ShareLink();
+    link.url = entry.url;
+    link.title = entry.title;
+    link.description = entry.transient ? '' : entry.bookmark.description;
+    ShareOut.shareBookmarks([link]);
+  }
+
   private openSystemBrowser(): void {
     const entry = this.currentEntry();
     if (entry.url.length === 0) {
@@ -861,6 +877,10 @@ export struct ReadingShell {
       MenuItem({ content: '复制链接' })
         .onClick(() => {
           this.copyLink().catch(() => {});
+        })
+      MenuItem({ content: '分享' })
+        .onClick(() => {
+          this.shareCurrent();
         })
       if (this.currentEntry().transient && !this.currentEntry().savedOnce) {
         MenuItem({ content: '收藏这一页' })

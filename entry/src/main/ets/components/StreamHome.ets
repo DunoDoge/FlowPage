@@ -4,6 +4,7 @@ import { BookmarkQuery, BookmarkSort } from '../model/BookmarkQuery';
 import { AppState } from '../common/AppState';
 import { ReadState, StreamFilter } from '../common/Constants';
 import { FolderDragSession } from '../common/FolderDragSession';
+import { ShareLink, ShareOut } from '../common/ShareOut';
 import { LibrarySummary, BatchImpact, BatchOutcome, FlowRepository } from '../repository/FlowRepository';
 import { BookmarkRow } from './BookmarkRow';
 import { FolderPicker } from './FolderPicker';
@@ -72,6 +73,7 @@ export struct StreamHome {
     if (this.searchTimer >= 0) {
       clearTimeout(this.searchTimer);
     }
+    ShareOut.dismiss();
   }
 
   @Monitor('appState.refreshTick')
@@ -655,6 +657,33 @@ export struct StreamHome {
     }
   }
 
+  private shareLinkOf(item: Bookmark): ShareLink {
+    const link = new ShareLink();
+    link.url = item.url;
+    link.title = item.title;
+    link.description = item.description;
+    return link;
+  }
+
+  private shareActionTarget(): void {
+    this.showActions = false;
+    ShareOut.shareBookmarks([this.shareLinkOf(this.actionTarget)]);
+  }
+
+  private shareSelected(): void {
+    const selected = this.appState.selectedBookmarkIds;
+    const links: ShareLink[] = [];
+    for (let i = 0; i < this.filtered.length; i++) {
+      if (selected.indexOf(this.filtered[i].id) >= 0) {
+        links.push(this.shareLinkOf(this.filtered[i]));
+      }
+    }
+    if (links.length === 0) {
+      return;
+    }
+    ShareOut.shareBookmarks(links);
+  }
+
   private selectSort(value: number): void {
     this.sort = value;
     this.exitSelection();
@@ -1125,6 +1154,9 @@ export struct StreamHome {
             this.showActions = false;
             this.onOpen(id);
           })
+          this.ActionChip(() => '分享', false, () => {
+            this.shareActionTarget();
+          })
           this.ActionChip(() => '多选', false, () => this.enterSelection(this.actionTarget.id))
           this.ActionChip(() => '移动到文件夹', false, () => {
             this.bookmarkMoveOpen = true;
@@ -1232,6 +1264,9 @@ export struct StreamHome {
             })
             this.ActionChip(() => this.readActionLabel(), false, () => {
               this.batchRead();
+            })
+            this.ActionChip(() => '分享', false, () => {
+              this.shareSelected();
             })
           }
           this.ActionChip(() => '移动到…', false, () => {

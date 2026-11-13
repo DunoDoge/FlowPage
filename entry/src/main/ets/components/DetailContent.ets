@@ -1,7 +1,6 @@
 import { Want } from '@kit.AbilityKit';
 import { KeyCode } from '@kit.InputKit';
 import { pasteboard } from '@kit.BasicServicesKit';
-import { systemShare } from '@kit.ShareKit';
 import { MetadataService } from '../core/service/MetadataService';
 import { ArticleDocument } from '../model/Article';
 import { MetadataApplyResult } from '../model/MetadataResult';
@@ -10,7 +9,8 @@ import { FolderNode } from '../model/Folder';
 import { AppState } from '../common/AppState';
 import { ReadState, SnapshotStatus } from '../common/Constants';
 import { formatFullDate } from '../common/DateUtil';
-import { deepLinkTextOf, shareContentOf } from '../common/ShareUtil';
+import { ShareLink, ShareOut } from '../common/ShareOut';
+import { deepLinkTextOf } from '../common/ShareUtil';
 import { domainOf } from '../common/UrlUtil';
 import { FlowRepository } from '../repository/FlowRepository';
 import { ReadingMode, ReadingSeed } from '../model/ReadingEntry';
@@ -352,30 +352,17 @@ export struct DetailContent {
     AppState.shared.openReading(seed);
   }
 
-  private async shareBookmark(): Promise<void> {
+  // Absorbed into ShareOut: one exit for every share entry, real summary
+  // instead of the domain, no flowpage:// deep-link fallback for outsiders.
+  private shareBookmark(): void {
     if (!this.hasBookmark) {
       return;
     }
-    const data = new systemShare.SharedData({
-      utd: 'general.hyperlink',
-      content: shareContentOf(this.bookmark),
-      title: this.bookmark.title,
-      description: domainOf(this.bookmark.url)
-    });
-    const controller = new systemShare.ShareController(data);
-    const shareContext = AppState.shared.abilityContext;
-    if (shareContext === undefined) {
-      AppState.shared.toast('没有拉起分享面板');
-      return;
-    }
-    try {
-      await controller.show(shareContext, {
-        selectionMode: systemShare.SelectionMode.SINGLE,
-        previewMode: systemShare.SharePreviewMode.DEFAULT
-      });
-    } catch (error) {
-      AppState.shared.toast('没有拉起分享面板');
-    }
+    const link = new ShareLink();
+    link.url = this.bookmark.url;
+    link.title = this.bookmark.title;
+    link.description = this.bookmark.description;
+    ShareOut.shareBookmarks([link]);
   }
 
   private async copyDeepLink(): Promise<void> {
