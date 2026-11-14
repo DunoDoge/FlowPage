@@ -153,6 +153,96 @@ export default function importTest() {
       expect((await new BookmarkDao().listAll(false)).length).assertEqual(30);
     });
 
+    it('mergeModeMovesImportedBookmarksToNewFolder', 0, async () => {
+      const first = '<DL><p>\n<DT><H3>旧夹</H3>\n<DL><p>\n' +
+        '<DT><A HREF="https://move.example.com/a">会搬</A>\n</DL><p>\n</DL><p>\n';
+      await FlowRepository.get().importHtml(first, importOptions());
+      const dao = new BookmarkDao();
+      const before = await dao.findByUrlKey('https://move.example.com/a');
+      expect(before === undefined).assertFalse();
+      if (before === undefined) {
+        return;
+      }
+      expect(before.folderId.length > 0).assertTrue();
+      const second = '<DL><p>\n<DT><H3>新夹</H3>\n<DL><p>\n' +
+        '<DT><A HREF="https://move.example.com/a">会搬</A>\n</DL><p>\n</DL><p>\n';
+      const options = importOptions();
+      options.mergeFolders = true;
+      const result = await FlowRepository.get().importHtml(second, options);
+      expect(result.imported).assertEqual(0);
+      expect(result.moved).assertEqual(1);
+      expect(result.skipped).assertEqual(1);
+      const after = await dao.findByUrlKey('https://move.example.com/a');
+      expect(after === undefined).assertFalse();
+      if (after !== undefined) {
+        expect(after.folderId === before.folderId).assertFalse();
+        expect(after.source).assertEqual(BookmarkSource.IMPORT);
+      }
+      const tree = await FlowRepository.get().folderTree();
+      const names: string[] = [];
+      for (let i = 0; i < tree.length; i++) {
+        names.push(tree[i].folder.name);
+      }
+      expect(names.indexOf('新夹') >= 0).assertTrue();
+    });
+
+    it('mergeModeKeepsManualBookmarksInPlace', 0, async () => {
+      const manual = Bookmark.create('https://keep.example.com/a', '手工', BookmarkSource.MANUAL);
+      await new BookmarkDao().insert(manual);
+      const html = '<DL><p>\n<DT><H3>浏览器夹</H3>\n<DL><p>\n' +
+        '<DT><A HREF="https://keep.example.com/a">手工</A>\n</DL><p>\n</DL><p>\n';
+      const options = importOptions();
+      options.mergeFolders = true;
+      const result = await FlowRepository.get().importHtml(html, options);
+      expect(result.moved).assertEqual(0);
+      const after = await new BookmarkDao().findByUrlKey('https://keep.example.com/a');
+      expect(after === undefined).assertFalse();
+      if (after !== undefined) {
+        expect(after.folderId).assertEqual(manual.folderId);
+        expect(after.source).assertEqual(BookmarkSource.MANUAL);
+      }
+    });
+
+    it('mergeModeOffKeepsFolderUnchanged', 0, async () => {
+      const first = '<DL><p>\n<DT><H3>旧夹</H3>\n<DL><p>\n' +
+        '<DT><A HREF="https://stay.example.com/a">不动</A>\n</DL><p>\n</DL><p>\n';
+      await FlowRepository.get().importHtml(first, importOptions());
+      const dao = new BookmarkDao();
+      const before = await dao.findByUrlKey('https://stay.example.com/a');
+      expect(before === undefined).assertFalse();
+      const second = '<DL><p>\n<DT><H3>新夹</H3>\n<DL><p>\n' +
+        '<DT><A HREF="https://stay.example.com/a">不动</A>\n</DL><p>\n</DL><p>\n';
+      const result = await FlowRepository.get().importHtml(second, importOptions());
+      expect(result.moved).assertEqual(0);
+      const after = await dao.findByUrlKey('https://stay.example.com/a');
+      expect(after === undefined).assertFalse();
+      if (after !== undefined && before !== undefined) {
+        expect(after.folderId).assertEqual(before.folderId);
+        expect(after.updatedAt).assertEqual(before.updatedAt);
+      }
+    });
+
+    it('mergeModeSecondRunStaysSyncSilent', 0, async () => {
+      const html = '<DL><p>\n<DT><H3>同步夹</H3>\n<DL><p>\n' +
+        '<DT><A HREF="https://silent.example.com/a">幂等</A>\n</DL><p>\n</DL><p>\n';
+      await FlowRepository.get().importHtml(html, importOptions());
+      const dao = new BookmarkDao();
+      const before = await dao.findByUrlKey('https://silent.example.com/a');
+      expect(before === undefined).assertFalse();
+      const options = importOptions();
+      options.mergeFolders = true;
+      const firstMerge = await FlowRepository.get().importHtml(html, options);
+      expect(firstMerge.moved).assertEqual(0);
+      const secondMerge = await FlowRepository.get().importHtml(html, options);
+      expect(secondMerge.moved).assertEqual(0);
+      const after = await dao.findByUrlKey('https://silent.example.com/a');
+      expect(after === undefined).assertFalse();
+      if (after !== undefined && before !== undefined) {
+        expect(after.rev).assertEqual(before.rev);
+        expect(after.updatedAt).assertEqual(before.updatedAt);
+      }
+    });
+
     it('supportsCancellation', 0, async () => {
       const html = buildHtml(100, 'cancel', '');
       const options = new ImportOptions();

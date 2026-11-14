@@ -371,6 +371,19 @@ export class BookmarkDao {
     return keys;
   }
 
+  // url_key -> source map for merge-mode previews: counts how many already
+  // present bookmarks are browser-imported (eligible for folder follow).
+  async listUrlKeySources(): Promise<Map<string, number>> {
+    const store = Database.getStore();
+    const sources = new Map<string, number>();
+    const resultSet = await store.querySql('SELECT url_key, source FROM bookmark', []);
+    while (resultSet.goToNextRow()) {
+      sources.set(resultSet.getString(0), resultSet.getLong(1));
+    }
+    resultSet.close();
+    return sources;
+  }
+
   async countCreatedSince(since: number): Promise<number> {
     const store = Database.getStore();
     const resultSet = await store.querySql(

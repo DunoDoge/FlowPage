@@ -67,6 +67,19 @@
               }
             ],
             "domainVerify": true
+          },
+          {
+            "actions": [
+              "ohos.want.action.viewData",
+              "ohos.want.action.sendData"
+            ],
+            "uris": [
+              {
+                "scheme": "file",
+                "utd": "general.html",
+                "maxFileSupported": 1
+              }
+            ]
           }
         ]
       }
@@ -93,7 +106,7 @@
               },
               {
                 "scheme": "file",
-                "utd": "general.text",
+                "utd": "general.plain-text",
                 "maxFileSupported": 1
               }
             ]

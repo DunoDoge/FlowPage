@@ -4,4 +4,5 @@ export class ImportPreview {
   duplicateCount: number = 0;
   invalidCount: number = 0;
   importable: number = 0;
+  mergeableCount: number = 0;
 }

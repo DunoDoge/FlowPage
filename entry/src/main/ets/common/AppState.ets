@@ -41,6 +41,10 @@ export class AppState {
   @Trace homeFilter: number = 0;
   @Trace inboxUrl: string = '';
   @Trace showInbox: boolean = false;
+  // Bookmark HTML handed over from the share extension or an open-with want;
+  // SettingsPage consumes it into the import preview (traced so an
+  // already-mounted page reacts without remount).
+  @Trace pendingImportHtml: string = '';
   @Trace readingOpen: boolean = false;
   @Trace readingTick: number = 0;
   @Trace readingBackTick: number = 0;

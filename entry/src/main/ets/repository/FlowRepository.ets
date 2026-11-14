@@ -55,6 +55,9 @@ export class LibrarySummary {
 export class ImportOptions {
   onProgress: (done: number, total: number) => void = (done: number, total: number) => {};
   shouldCancel: () => boolean = () => false;
+  // Merge mode: existing browser-imported bookmarks follow the file's folder
+  // placement; manually collected ones are never moved.
+  mergeFolders: boolean = false;
 }
 
 export class BatchOutcome {
@@ -601,6 +604,50 @@ export class FlowRepository {
     return outcome;
   }
 
+  // Batch intake (multi-URL paste / drag-in): same per-URL dedupe semantics
+  // as saveUrl, one notify() for the whole batch. Metadata is deliberately
+  // not fetched here — a dropped batch must not fire N network requests;
+  // rows surface the domain via siteName until opened.
+  async saveUrls(rawUrls: string[], source: number): Promise<BatchOutcome> {
+    const outcome = new BatchOutcome();
+    let changed = false;
+    for (let i = 0; i < rawUrls.length; i++) {
+      // Explicit-scheme gate: normalizeUrl would happily promote bare CJK
+      // text to a https:// hostname, which must never land in the library.
+      const lower = rawUrls[i].toLowerCase();
+      if (!lower.startsWith('http://') && !lower.startsWith('https://')) {
+        continue;
+      }
+      const normalized = normalizeUrl(rawUrls[i]);
+      if (normalized.length === 0) {
+        continue;
+      }
+      const existing = await this.dao.findByUrlKey(normalized);
+      if (existing !== undefined && !existing.deleted) {
+        outcome.skipped = outcome.skipped + 1;
+        continue;
+      }
+      if (existing !== undefined) {
+        existing.deleted = false;
+        existing.updatedAt = Date.now();
+        existing.rev = existing.rev + 1;
+        existing.dirty = true;
+        await this.dao.update(existing);
+      } else {
+        const bookmark = Bookmark.create(rawUrls[i], '', source);
+        bookmark.siteName = domainOf(rawUrls[i]);
+        bookmark.rebuildSearch();
+        await this.dao.insert(bookmark);
+      }
+      outcome.done = outcome.done + 1;
+      changed = true;
+    }
+    if (changed) {
+      this.notify();
+    }
+    return outcome;
+  }
+
   async applyMetadata(id: string): Promise<MetadataApplyResult> {
     const bookmark = await this.dao.findById(id);
     if (bookmark === undefined) {
@@ -939,15 +986,19 @@ export class FlowRepository {
     preview.folderCount = BookmarkHtmlParser.countFolders(parsed.items);
     preview.invalidCount = parsed.invalidCount;
     preview.duplicateCount = parsed.inFileDuplicates;
-    const existingKeys = await this.dao.listUrlKeys();
+    const existingSources = await this.dao.listUrlKeySources();
     for (let i = 0; i < parsed.items.length; i++) {
       const normalized = normalizeUrl(parsed.items[i].url);
       if (normalized.length === 0) {
         preview.invalidCount = preview.invalidCount + 1;
         continue;
       }
-      if (existingKeys.has(normalized)) {
+      const source = existingSources.get(normalized);
+      if (source !== undefined) {
         preview.duplicateCount = preview.duplicateCount + 1;
+        if (source === BookmarkSource.IMPORT) {
+          preview.mergeableCount = preview.mergeableCount + 1;
+        }
         continue;
       }
       preview.importable = preview.importable + 1;
@@ -966,6 +1017,22 @@ export class FlowRepository {
       parentId = await this.folderDao.findOrCreate(parentId, segments[i], cache);
     }
     return parentId;
+  }
+
+  // Applies the browser semantic marker (toolbar/unfiled) to the top folder
+  // once per import batch; setKind is idempotent, repeated imports stay
+  // sync-silent (D13).
+  private async applyTopFolderMark(
+    topName: string,
+    topId: string,
+    marks: Map<string, string>,
+    markedFolderIds: Set<string>
+  ): Promise<void> {
+    const kind = marks.get(topName);
+    if (kind !== undefined && !markedFolderIds.has(topId)) {
+      markedFolderIds.add(topId);
+      await this.folderDao.setKind(topId, kind);
+    }
   }
 
   async importHtml(html: string, options: ImportOptions): Promise<ImportResult> {
@@ -1017,6 +1084,20 @@ export class FlowRepository {
         continue;
       }
       if (existingKeys.has(normalized)) {
+        if (options.mergeFolders && item.segments.length > 0) {
+          const existing = await this.dao.findByUrlKey(normalized);
+          if (existing !== undefined && !existing.deleted && existing.source === BookmarkSource.IMPORT) {
+            const topId = await this.folderDao.findOrCreate('', item.segments[0], folderCache);
+            const targetId = await this.resolveFolderChain(item.segments, folderCache);
+            await this.applyTopFolderMark(item.segments[0], topId, parsed.topMarks, markedFolderIds);
+            // Compare first, write only on a real move: re-merging the same
+            // file must stay sync-silent (no dirty, no upload).
+            if (existing.folderId !== targetId) {
+              await this.dao.setFolder(existing.id, targetId);
+              result.moved = result.moved + 1;
+            }
+          }
+        }
         result.skipped = result.skipped + 1;
         continue;
       }
@@ -1028,13 +1109,7 @@ export class FlowRepository {
         // the shared cache makes the chain walk below hit it for free.
         const topId = await this.folderDao.findOrCreate('', item.segments[0], folderCache);
         bookmark.folderId = await this.resolveFolderChain(item.segments, folderCache);
-        // Apply the browser semantic marker once per top folder (D13);
-        // setKind is idempotent, repeated imports stay sync-silent.
-        const kind = parsed.topMarks.get(item.segments[0]);
-        if (kind !== undefined && !markedFolderIds.has(topId)) {
-          markedFolderIds.add(topId);
-          await this.folderDao.setKind(topId, kind);
-        }
+        await this.applyTopFolderMark(item.segments[0], topId, parsed.topMarks, markedFolderIds);
       }
       if (item.addedAt > 0) {
         bookmark.createdAt = item.addedAt;

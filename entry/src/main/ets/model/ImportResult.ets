@@ -13,4 +13,5 @@ export class ImportResult {
   cancelled: boolean = false;
   failedUrls: string[] = [];
   folderCount: number = 0;
+  moved: number = 0;
 }

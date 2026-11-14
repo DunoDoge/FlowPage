@@ -1,4 +1,5 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want, wantConstant } from '@kit.AbilityKit';
+import { systemShare } from '@kit.ShareKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -6,6 +7,8 @@ import { FlowRepository } from '../repository/FlowRepository';
 import { AppState } from '../common/AppState';
 import { shareLinkTargetOf } from '../common/ShareUtil';
 import { domainOf } from '../common/UrlUtil';
+import { readTextFileAll } from '../common/FileText';
+import { Pane } from '../common/Constants';
 import { ReadingMode, ReadingSeed } from '../model/ReadingEntry';
 import { STRIP_HEIGHT_VP } from '../common/WindowChrome';
 import { platformFailure } from '../common/PlatformError';
@@ -14,11 +17,44 @@ const DOMAIN = 0x0000;
 const ROOT_PAGE: string = 'pages/Index';
 const WINDOW_TITLE: string = '流笺';
 
+// Browsers export both extensions; the suffix pair is the fallback signal
+// when a want/record carries no utd type.
+function hasHtmlSuffix(uri: string): boolean {
+  const lower = uri.toLowerCase();
+  return lower.endsWith('.html') || lower.endsWith('.htm');
+}
+
+function isBookmarkHtmlUri(uri: string): boolean {
+  return uri.startsWith('file://') && hasHtmlSuffix(uri);
+}
+
+// Share-panel file delivery: the bookmark HTML record is only readable while
+// this want's grant is fresh (official receive pattern), so decode now.
+function findSharedBookmarkHtml(records: Array<systemShare.SharedRecord>): string {
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i];
+    const uri = record.uri;
+    if (uri === undefined || !uri.startsWith('file://')) {
+      continue;
+    }
+    if (record.utd === 'general.html' || hasHtmlSuffix(uri)) {
+      return uri;
+    }
+  }
+  return '';
+}
+
 export default class EntryAbility extends UIAbility {
   private contentLoaded: boolean = false;
   private continuation: boolean = false;
 
   private handleWant(want: Want): void {
+    // Share-panel delivery of a bookmark HTML file: the panel starts this
+    // ability directly (sendData skill); no extension session is involved.
+    if (want.action === 'ohos.want.action.sendData') {
+      this.handleSharedImport(want);
+      return;
+    }
     const params = want.parameters;
     if (params !== undefined) {
       const bookmarkId = params['bookmarkId'];
@@ -28,7 +64,9 @@ export default class EntryAbility extends UIAbility {
     }
     const uri = want.uri;
     if (uri !== undefined && uri.length > 0) {
-      if (uri.startsWith('flowpage://bookmark/')) {
+      if (isBookmarkHtmlUri(uri)) {
+        this.openImportFile(uri);
+      } else if (uri.startsWith('flowpage://bookmark/')) {
         AppState.shared.openBookmark(uri.substring('flowpage://bookmark/'.length));
       } else {
         // App Linking share links (https://dunodoge.com/s?u=…) open the
@@ -48,6 +86,38 @@ export default class EntryAbility extends UIAbility {
         }
       }
     }
+  }
+
+  // Share-panel handoff: resolve the HTML file record, read the text while
+  // the want's URI grant is fresh, stash it, and land on the settings pane
+  // for the import preview.
+  private handleSharedImport(want: Want): void {
+    AppState.shared.goPane(Pane.SETTINGS);
+    systemShare.getSharedData(want).then((data: systemShare.SharedData) => {
+      const uri = findSharedBookmarkHtml(data.getRecords());
+      if (uri.length === 0) {
+        hilog.warn(DOMAIN, 'flowpage', 'shared want carried no bookmark html record');
+        return;
+      }
+      return readTextFileAll(uri).then((html: string) => {
+        AppState.shared.pendingImportHtml = html;
+        hilog.info(DOMAIN, 'flowpage', 'shared bookmark html staged, bytes=%{public}d', html.length);
+      });
+    }).catch(() => {
+      hilog.error(DOMAIN, 'flowpage', 'failed to read shared bookmark html');
+      AppState.shared.toast('文件没读懂，请确认是浏览器导出的 HTML');
+    });
+  }
+
+  // Open-with handoff: read the file while the want's URI grant is fresh,
+  // stash the text, and land on the settings pane for the import preview.
+  private openImportFile(uri: string): void {
+    AppState.shared.goPane(Pane.SETTINGS);
+    readTextFileAll(uri).then((html: string) => {
+      AppState.shared.pendingImportHtml = html;
+    }).catch(() => {
+      AppState.shared.toast('文件没读懂，请确认是浏览器导出的 HTML');
+    });
   }
 
   private prepareContinuation(launchParam: AbilityConstant.LaunchParam): void {

@@ -6,6 +6,9 @@ import { AppState } from '../common/AppState';
 
 const DOMAIN = 0x0000;
 
+// Single-link intake only: bookmark HTML files are received by EntryAbility
+// directly (share panel starts it via its sendData skill), not routed through
+// this extension.
 export default class ShareAbility extends ShareExtensionAbility {
   onSessionCreate(want: Want, session: UIExtensionContentSession): void {
     AppState.shared.shareContext = this.context;

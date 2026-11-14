@@ -1,7 +1,7 @@
 import { pasteboard } from '@kit.BasicServicesKit';
 import { AppState } from '../common/AppState';
 import { BookmarkSource } from '../common/Constants';
-import { domainOf, extractFirstUrl, isValidHttpUrl } from '../common/UrlUtil';
+import { domainOf, extractAllUrls, extractFirstUrl, isValidHttpUrl } from '../common/UrlUtil';
 import { FlowRepository } from '../repository/FlowRepository';
 
 @ComponentV2
@@ -11,6 +11,7 @@ export struct InboxSheet {
   @Local titleText: string = '';
   @Local tagsText: string = '';
   @Local noteText: string = '';
+  @Local batchUrls: string[] = [];
   @Local busy: boolean = false;
 
   aboutToAppear(): void {
@@ -71,6 +72,18 @@ export struct InboxSheet {
     try {
       const data = await pasteboard.getSystemPasteboard().getData();
       const text = data.getPrimaryText();
+      const all = extractAllUrls(text);
+      if (all.length > 1) {
+        this.batchUrls = all;
+        return;
+      }
+      if (all.length === 1) {
+        this.batchUrls = [];
+        this.urlText = all[0];
+        return;
+      }
+      // Legacy single-link path: keep inferring bare domains for hand-typed
+      // text; batch extraction above is strictly explicit http(s).
       const found = extractFirstUrl(text);
       if (found.length === 0) {
         AppState.shared.toast('剪贴板里没有链接');
@@ -80,6 +93,31 @@ export struct InboxSheet {
     } catch (error) {
       AppState.shared.toast('读不到剪贴板');
     }
+  }
+
+  private async saveBatch(): Promise<void> {
+    if (this.busy || this.batchUrls.length === 0) {
+      return;
+    }
+    this.busy = true;
+    try {
+      const outcome = await FlowRepository.get().saveUrls(this.batchUrls, BookmarkSource.MANUAL);
+      this.appState.closeInbox();
+      if (outcome.done === 0 && outcome.skipped > 0) {
+        AppState.shared.toast('这些都已收过');
+      } else {
+        const skipSuffix = outcome.skipped > 0 ? `、跳过 ${outcome.skipped} 条` : '';
+        AppState.shared.toast(`收下 ${outcome.done} 条${skipSuffix}`);
+      }
+    } catch (error) {
+      AppState.shared.toast('没收下，请检查链接');
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  private removeBatchUrl(url: string): void {
+    this.batchUrls = this.batchUrls.filter((one: string): boolean => one !== url);
   }
 
   build() {
@@ -149,6 +187,79 @@ export struct InboxSheet {
             .fontSize(12)
             .fontColor($r('app.color.ink_tertiary'))
             .width('100%')
+        }
+
+        if (this.batchUrls.length > 0) {
+          Column({ space: 10 }) {
+            Row() {
+              Text(`识别到 ${this.batchUrls.length} 条链接`)
+                .fontSize(13)
+                .fontColor($r('app.color.ink'))
+              Blank()
+              Text('点一条移除一条')
+                .fontSize(11)
+                .fontColor($r('app.color.ink_tertiary'))
+            }
+            .width('100%')
+
+            Scroll() {
+              Column() {
+                ForEach(this.batchUrls, (url: string) => {
+                  Column({ space: 2 }) {
+                    Text(domainOf(url).length > 0 ? domainOf(url) : url)
+                      .fontSize(12)
+                      .fontColor($r('app.color.ink'))
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    Text(url)
+                      .fontSize(11)
+                      .fontColor($r('app.color.ink_tertiary'))
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  }
+                  .alignItems(HorizontalAlign.Start)
+                  .width('100%')
+                  .constraintSize({ minHeight: 44 })
+                  .justifyContent(FlexAlign.Center)
+                  .onClick(() => this.removeBatchUrl(url))
+                }, (url: string) => url)
+              }
+              .width('100%')
+            }
+            .width('100%')
+            .constraintSize({ maxHeight: 216 })
+            .scrollBar(BarState.Auto)
+            .edgeEffect(EdgeEffect.None)
+
+            Row({ space: 10 }) {
+              Text(this.busy ? '正在收下…' : `收下这 ${this.batchUrls.length} 条`)
+                .fontSize(14)
+                .fontColor($r('app.color.inverse_ink'))
+                .backgroundColor($r('app.color.ink'))
+                .borderRadius(6)
+                .height(44)
+                .layoutWeight(1)
+                .textAlign(TextAlign.Center)
+                .accessibilityText(`收下这 ${this.batchUrls.length} 条链接`)
+                .onClick(() => this.saveBatch())
+              SymbolGlyph($r('sys.symbol.xmark'))
+                .fontSize(16)
+                .fontColor([$r('app.color.ink_secondary')])
+                .height(44)
+                .padding({ left: 10, right: 4 })
+                .accessibilityText('忽略这批链接')
+                .onClick(() => {
+                  this.batchUrls = [];
+                })
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+          }
+          .width('100%')
+          .padding(10)
+          .backgroundColor($r('app.color.surface_alt'))
+          .borderRadius(8)
+          .alignItems(HorizontalAlign.Start)
         }
 
         TextInput({ text: this.titleText, placeholder: '标题（可留空，稍后自动补全）' })

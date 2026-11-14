@@ -17,7 +17,7 @@ import {
   CARD_PREFERENCES_NAME,
   CardSnapshot
 } from '../../../main/ets/core/service/CardSnapshot';
-import { normalizeUrl } from '../../../main/ets/common/UrlUtil';
+import { normalizeUrl, extractAllUrls } from '../../../main/ets/common/UrlUtil';
 
 function joinedSegments(segments: HighlightSegment[]): string {
   let joined = '';
@@ -61,6 +61,47 @@ export default function repositoryTest() {
       expect(normalizeUrl('data:text/html,hi')).assertEqual('');
       expect(normalizeUrl('tel:10086')).assertEqual('');
       expect(normalizeUrl('localhost:8080/a')).assertEqual('https://localhost:8080/a');
+    });
+
+    it('extractsAllExplicitUrlsWithPunctuationTrim', 0, () => {
+      const text = '看这两个\nhttps://a.example.com/one，和 http://b.example.com/two。\n' +
+        'bare.example.com/a 不推断，重复的不算';
+      const urls = extractAllUrls(text);
+      expect(urls.length).assertEqual(2);
+      expect(urls[0]).assertEqual('https://a.example.com/one');
+      expect(urls[1]).assertEqual('http://b.example.com/two');
+    });
+
+    it('extractAllUrlsDedupesAfterNormalization', 0, () => {
+      const urls = extractAllUrls('https://c.example.com/x?utm_source=we https://c.example.com/x');
+      expect(urls.length).assertEqual(1);
+      expect(urls[0]).assertEqual('https://c.example.com/x');
+      const none = extractAllUrls('没有链接，只有文字。');
+      expect(none.length).assertEqual(0);
+    });
+
+    it('saveUrlsBatchDedupesAndCounts', 0, async () => {
+      await FlowRepository.get().saveUrl('https://batch.example.com/one', '', [], '', BookmarkSource.MANUAL);
+      const outcome = await FlowRepository.get().saveUrls([
+        'https://batch.example.com/one',
+        'https://batch.example.com/two',
+        '不是链接'
+      ], BookmarkSource.BROWSER);
+      expect(outcome.done).assertEqual(1);
+      expect(outcome.skipped).assertEqual(1);
+      const all = await new BookmarkDao().listAll(false);
+      expect(all.length).assertEqual(2);
+    });
+
+    it('saveUrlsResurrectsDeletedBookmarks', 0, async () => {
+      const outcome = await FlowRepository.get().saveUrl('https://back.example.com/a', '', [], '', BookmarkSource.MANUAL);
+      expect(outcome.created).assertTrue();
+      await FlowRepository.get().deleteMany([outcome.bookmark.id]);
+      const batch = await FlowRepository.get().saveUrls(['https://back.example.com/a'], BookmarkSource.BROWSER);
+      expect(batch.done).assertEqual(1);
+      expect(batch.skipped).assertEqual(0);
+      const all = await new BookmarkDao().listAll(false);
+      expect(all.length).assertEqual(1);
     });
 
     it('highlightsKeywordSegments', 0, () => {

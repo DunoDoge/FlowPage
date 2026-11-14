@@ -107,6 +107,38 @@ export function domainOf(input: string): string {
   }
 }
 
+const SCANNED_URL_PATTERN: RegExp = new RegExp('https?://[^\\s<>"\']+', 'gi');
+
+// Extracts every explicit http(s) URL from a free-form blob (batch paste /
+// drop payloads). Bare domains are deliberately not inferred: batch intake
+// must not guess. A match is cut at its first non-ASCII character — CJK
+// prose runs on without spaces and would otherwise be swallowed into the
+// path (raw non-ASCII URLs arrive percent-encoded in practice). Results are
+// normalized and de-duplicated, order preserved.
+export function extractAllUrls(text: string): string[] {
+  const found: string[] = [];
+  const seen = new Set<string>();
+  SCANNED_URL_PATTERN.lastIndex = 0;
+  let match = SCANNED_URL_PATTERN.exec(text);
+  while (match !== null) {
+    const candidate = match[0];
+    let cut = candidate.length;
+    for (let k = 0; k < candidate.length; k++) {
+      if (candidate.charCodeAt(k) > 0x7f) {
+        cut = k;
+        break;
+      }
+    }
+    const normalized = normalizeUrl(trimPunctuation(candidate.substring(0, cut)));
+    if (normalized.length > 0 && !seen.has(normalized)) {
+      seen.add(normalized);
+      found.push(normalized);
+    }
+    match = SCANNED_URL_PATTERN.exec(text);
+  }
+  return found;
+}
+
 export function extractFirstUrl(text: string): string {
   const trimmed = text.trim();
   if (trimmed.length === 0) {

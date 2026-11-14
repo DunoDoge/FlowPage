@@ -1,17 +1,16 @@
 import { ConfigurationConstant, bundleManager } from '@kit.AbilityKit';
 import { preferences } from '@kit.ArkData';
 import { picker, fileIo as fs } from '@kit.CoreFileKit';
-import { util } from '@kit.ArkTS';
 import { LibrarySummary, FlowRepository, ImportOptions } from '../repository/FlowRepository';
 import { ImportPreview } from '../model/ImportPreview';
 import { ImportResult } from '../model/ImportResult';
 import { AppState } from '../common/AppState';
 import { KeyCode } from '@kit.InputKit';
 import { PageHeader } from '../components/PageHeader';
+import { readTextFileAll } from '../common/FileText';
 
 const SETTINGS_NAME: string = 'flowpage_settings';
 const AUTO_SNAPSHOT_KEY: string = 'auto_snapshot';
-const READ_CHUNK: number = 262144;
 
 @ComponentV2
 export struct SettingsPage {
@@ -26,6 +25,7 @@ export struct SettingsPage {
   @Local progressText: string = '';
   @Local importResult: ImportResult | undefined = undefined;
   @Local preview: ImportPreview | undefined = undefined;
+  @Local mergeFolders: boolean = false;
   @Local versionName: string = '';
   private pendingHtml: string = '';
   private cancelRequested: boolean = false;
@@ -34,6 +34,7 @@ export struct SettingsPage {
     this.readSettings();
     this.readVersionName();
     this.loadSummary();
+    this.consumePendingImport();
   }
 
   private readVersionName(): void {
@@ -49,6 +50,52 @@ export struct SettingsPage {
   @Monitor('appState.refreshTick')
   onChanged(): void {
     this.loadSummary();
+  }
+
+  @Monitor('appState.pendingImportHtml')
+  onPendingImport(): void {
+    this.consumePendingImport();
+  }
+
+  @Monitor('appState.libraryReady')
+  onLibraryReady(): void {
+    // Cold-start handoffs arrive before repository init finished; retry then.
+    this.consumePendingImport();
+  }
+
+  // Consumes an HTML handoff from the share extension or an open-with want
+  // into the regular import preview. Defers (keeping the stash) until the
+  // repository is ready and any in-flight import settles.
+  private consumePendingImport(): void {
+    if (this.importing || this.appState.pendingImportHtml.length === 0) {
+      return;
+    }
+    if (!this.appState.libraryReady) {
+      return;
+    }
+    const html = this.appState.pendingImportHtml;
+    this.appState.pendingImportHtml = '';
+    this.previewBookmarkHtml(html);
+  }
+
+  private async previewBookmarkHtml(html: string): Promise<void> {
+    this.importResult = undefined;
+    this.preview = undefined;
+    this.progressText = '正在解析…';
+    try {
+      const preview = await FlowRepository.get().previewHtml(html);
+      if (preview.total === 0) {
+        this.progressText = '';
+        AppState.shared.toast('没读到书签，请确认是浏览器导出的 HTML');
+        return;
+      }
+      this.pendingHtml = html;
+      this.preview = preview;
+      this.progressText = '';
+    } catch (error) {
+      this.progressText = '';
+      AppState.shared.toast('文件没读懂，请确认是浏览器导出的 HTML');
+    }
   }
 
   private async loadSummary(): Promise<void> {
@@ -102,31 +149,6 @@ export struct SettingsPage {
     }
   }
 
-  private async readFileChunked(uri: string): Promise<string> {
-    const file = fs.openSync(uri, fs.OpenMode.READ_ONLY);
-    try {
-      const stat = fs.statSync(file.fd);
-      const total = stat.size;
-      const buffer = new ArrayBuffer(READ_CHUNK);
-      const bytes = new Uint8Array(total);
-      let offset = 0;
-      while (offset < total) {
-        const remaining = total - offset;
-        const toRead = remaining < READ_CHUNK ? remaining : READ_CHUNK;
-        const read = await fs.read(file.fd, buffer, { offset: offset, length: toRead });
-        if (read <= 0) {
-          break;
-        }
-        bytes.set(new Uint8Array(buffer.slice(0, read)), offset);
-        offset = offset + read;
-        this.progressText = `正在读取 ${Math.floor(offset * 100 / total)}%`;
-      }
-      return new util.TextDecoder('utf-8').decodeToString(bytes.subarray(0, offset));
-    } finally {
-      fs.closeSync(file);
-    }
-  }
-
   private async pickImportFile(): Promise<void> {
     if (this.importing) {
       return;
@@ -141,7 +163,9 @@ export struct SettingsPage {
       this.importResult = undefined;
       this.preview = undefined;
       this.progressText = '正在读取…';
-      const html = await this.readFileChunked(uris[0]);
+      const html = await readTextFileAll(uris[0], (percent: number) => {
+        this.progressText = `正在读取 ${percent}%`;
+      });
       this.progressText = '正在解析…';
       const preview = await FlowRepository.get().previewHtml(html);
       this.pendingHtml = html;
@@ -156,6 +180,7 @@ export struct SettingsPage {
   private cancelPreview(): void {
     this.preview = undefined;
     this.pendingHtml = '';
+    this.mergeFolders = false;
     this.progressText = '';
   }
 
@@ -173,10 +198,12 @@ export struct SettingsPage {
         this.progressText = `${done} / ${total}`;
       };
       options.shouldCancel = () => this.cancelRequested;
+      options.mergeFolders = this.mergeFolders;
       const result = await FlowRepository.get().importHtml(this.pendingHtml, options);
       this.importResult = result;
       this.preview = undefined;
       this.pendingHtml = '';
+      this.mergeFolders = false;
       this.progressText = '';
       if (result.cancelled) {
         AppState.shared.toast(`已取消，导入 ${result.imported} 条`);
@@ -189,6 +216,8 @@ export struct SettingsPage {
       AppState.shared.toast('导入失败，本地数据没有变化');
     } finally {
       this.importing = false;
+      // A handoff that arrived mid-import was deferred; pick it up now.
+      this.consumePendingImport();
     }
   }
 
@@ -197,7 +226,7 @@ export struct SettingsPage {
     this.progressText = '正在取消…';
   }
 
-  private async saveText(fileName: string, content: string): Promise<void> {
+  private async saveText(fileName: string, content: string, doneToast: string = '已导出'): Promise<void> {
     try {
       const options = new picker.DocumentSaveOptions();
       options.newFileNames = [fileName];
@@ -208,7 +237,7 @@ export struct SettingsPage {
       const file = fs.openSync(uris[0], fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
       fs.writeSync(file.fd, content);
       fs.closeSync(file);
-      AppState.shared.toast('已导出');
+      AppState.shared.toast(doneToast);
     } catch (error) {
       AppState.shared.toast('导出失败');
     }
@@ -221,7 +250,15 @@ export struct SettingsPage {
 
   private async exportHtml(): Promise<void> {
     const content = await FlowRepository.get().exportHtml();
-    await this.saveText('flowpage-bookmarks.html', content);
+    await this.saveText(`flowpage-bookmarks-${this.dateStamp()}.html`, content, '已导出，可在浏览器书签导入中使用');
+  }
+
+  private dateStamp(): string {
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+    const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
+    return `${now.getFullYear()}${pad(month)}${pad(day)}`;
   }
 
   private async exportFailures(): Promise<void> {
@@ -361,6 +398,27 @@ export struct SettingsPage {
                 Text(`重复 ${this.preview.duplicateCount} · 无法识别 ${this.preview.invalidCount} · 文件夹 ${this.preview.folderCount}`)
                   .fontSize(11)
                   .fontColor($r('app.color.ink_secondary'))
+                if (this.preview.mergeableCount > 0) {
+                  Row() {
+                    Column({ space: 3 }) {
+                      Text('按文件同步文件夹归属')
+                        .fontSize(13)
+                        .fontColor($r('app.color.ink'))
+                      Text(`浏览器导入的 ${this.preview.mergeableCount} 条会跟随文件中的文件夹；手工收进的不动`)
+                        .fontSize(11)
+                        .fontColor($r('app.color.ink_tertiary'))
+                    }
+                    .alignItems(HorizontalAlign.Start)
+                    .layoutWeight(1)
+                    Toggle({ type: ToggleType.Switch, isOn: this.mergeFolders })
+                      .selectedColor($r('app.color.ink'))
+                      .onChange((isOn: boolean) => {
+                        this.mergeFolders = isOn;
+                      })
+                  }
+                  .width('100%')
+                  .constraintSize({ minHeight: 44 })
+                }
                 Row({ space: 14 }) {
                   Text('开始导入')
                     .fontSize(13)
@@ -393,7 +451,8 @@ export struct SettingsPage {
                 Text(`导入完成 · ${this.importResult.imported} 条`)
                   .fontSize(13)
                   .fontColor($r('app.color.ink'))
-                Text(`跳过重复 ${this.importResult.skipped} · 失败 ${this.importResult.failed} · 文件夹 ${this.importResult.folderCount}`)
+                Text(`跳过重复 ${this.importResult.skipped} · 失败 ${this.importResult.failed} · 文件夹 ${this.importResult.folderCount}` +
+                  (this.importResult.moved > 0 ? ` · 搬迁 ${this.importResult.moved}` : ''))
                   .fontSize(11)
                   .fontColor($r('app.color.ink_secondary'))
                 if (this.importResult.failedUrls.length > 0) {

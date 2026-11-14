@@ -1,9 +1,11 @@
 import { KeyCode } from '@kit.InputKit';
+import { unifiedDataChannel, uniformTypeDescriptor } from '@kit.ArkData';
 import { Bookmark } from '../model/Bookmark';
 import { BookmarkQuery, BookmarkSort } from '../model/BookmarkQuery';
 import { AppState } from '../common/AppState';
-import { ReadState, StreamFilter } from '../common/Constants';
+import { BookmarkSource, ReadState, StreamFilter } from '../common/Constants';
 import { FolderDragSession } from '../common/FolderDragSession';
+import { extractAllUrls } from '../common/UrlUtil';
 import { ShareLink, ShareOut } from '../common/ShareOut';
 import { LibrarySummary, BatchImpact, BatchOutcome, FlowRepository } from '../repository/FlowRepository';
 import { BookmarkRow } from './BookmarkRow';
@@ -514,6 +516,56 @@ export struct StreamHome {
     } else {
       // A collapsed docked rail leaves the drag with no drop target.
       this.appState.sideNavOpen = true;
+    }
+  }
+
+  // External link intake (split-screen / free-window drag from a browser).
+  // The internal folder-drag session owns its own drops and must never be
+  // treated as intake.
+  private collectDroppedUrls(event: DragEvent): string[] {
+    const urls: string[] = [];
+    try {
+      const records = event.getData().getRecords();
+      for (let i = 0; i < records.length; i++) {
+        const record = records[i];
+        if (record instanceof unifiedDataChannel.Hyperlink) {
+          urls.push(record.url);
+        } else if (record instanceof unifiedDataChannel.PlainText) {
+          const found = extractAllUrls(record.textContent);
+          for (let j = 0; j < found.length; j++) {
+            urls.push(found[j]);
+          }
+        }
+      }
+    } catch (error) {
+      // Unreadable payload: report nothing found.
+    }
+    return urls;
+  }
+
+  private async dropExternalLinks(event: DragEvent): Promise<void> {
+    if (this.dragSession.active) {
+      event.setResult(DragResult.DRAG_FAILED);
+      return;
+    }
+    const urls = this.collectDroppedUrls(event);
+    if (urls.length === 0) {
+      event.setResult(DragResult.DRAG_FAILED);
+      AppState.shared.toast('没识别到链接');
+      return;
+    }
+    try {
+      const outcome = await FlowRepository.get().saveUrls(urls, BookmarkSource.BROWSER);
+      event.setResult(DragResult.DRAG_SUCCESSFUL);
+      if (outcome.done === 0 && outcome.skipped > 0) {
+        AppState.shared.toast('这些都已收过');
+      } else {
+        const skipSuffix = outcome.skipped > 0 ? `、跳过 ${outcome.skipped} 条` : '';
+        AppState.shared.toast(`收下 ${outcome.done} 条${skipSuffix}`);
+      }
+    } catch (error) {
+      event.setResult(DragResult.DRAG_FAILED);
+      AppState.shared.toast('没收下，请再拖一次');
     }
   }
 
@@ -1076,6 +1128,10 @@ export struct StreamHome {
     .width('100%')
     .height('100%')
     .backgroundColor($r('app.color.paper'))
+    .allowDrop([uniformTypeDescriptor.UniformDataType.HYPERLINK, uniformTypeDescriptor.UniformDataType.PLAIN_TEXT])
+    .onDrop((event: DragEvent) => {
+      this.dropExternalLinks(event);
+    })
   }
 
   // Labels are providers so the Text update function reads selection state itself;

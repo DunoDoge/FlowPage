@@ -177,6 +177,11 @@ struct Index {
     this.lgListener.on('change', this.onLargeChange);
     this.restoreTheme();
     this.initRepository();
+    // Pane may have been routed before attach (cold-start import handoff);
+    // @Monitor does not replay pre-attach changes, so sync once here.
+    const initialPane = this.paneIndex(this.appState.pane);
+    this.markTabVisited(initialPane);
+    this.activeTabIndex = initialPane;
     if (this.appState.hasPendingRoute()) {
       this.appState.consumeRoute();
       if (!this.isWide) {
