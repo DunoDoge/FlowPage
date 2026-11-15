@@ -32,6 +32,9 @@ codelinter -c code-linter.json5   # 当前 0 error / 1 条 startIcon 性能建�
   （快速 ArkTS 严格模式检查），再跑 `hvigorw assembleHap`；不要用 `devecocli build` 作为验证门禁。
 - 纯函数测试入口是 `entry/src/test`（`hvigorw test`），与设备端 `entry/src/ohosTest` 分开；本机 SDK
   未安装 previewer 包时 `hvigorw test` 会停在 `previewer/common/bin ENOENT`，此时只能跑设备端套件。
+- UI 自动化注意（2in1 真机实测）：中文输入法面板会拦截 `uitest` 注入的点击（坐标命中但事件不达应用，
+  hilog 刷 `ImsaKit updateCursor` 错误）；驱动收笺面板等表单流程用免键盘路径——`aa start -U <url>` 经
+  want 预填，收笺面板整体流程不唤起输入法。
 - 设备端测试（真机/模拟器）：
 
 ```bash
@@ -139,6 +142,32 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
 - 主页头部不放统计条/批量/粘贴/筛选：「批量」在排序行行尾（`BatchButton`，全断点同位）；主页**没有**筛选
   chips 行（真机反馈后移除），智能视图是主列表筛选唯一入口；剪贴板粘贴入口在收笺
   面板（`InboxSheet`）URL 行内的 `PasteButton`（安全组件，点击即获读取授权，读出首个 URL 回填输入框）。
+- **收笺面板动效（inbox-motion）**：`InboxSheet` 在 `Index` **常驻挂载**（勿改回 `if (showInbox)` 条件挂载），
+  内部 `InboxPhase` 相位机（closed/entering/open/exiting/launching）由 `@Monitor('appState.showInbox')` 驱动；
+  `AppState.showInbox` 仍是唯一意图源，退场口味（launch 发射感/dismiss 下滑）是组件内 `launchExit` 私有状态。
+  呈现矩阵（`@Param isWide/isLarge` 由 Index 同源断点传入）：<700vp 贴底悬浮卡（四角 16 圆角 + 左右/底 12vp 留边，手机宽度须
+  `calc('100% - 24vp')`——`width('100%')` 按父容器全宽解析、左右 margin 被吞不渲染，像素实测；方角全宽板起飞有"掀幕布"割裂感——板 vs 物，真机反馈）；≥700vp 居中卡片（Stack 对齐 Center、
+  700–999vp 宽 min(84%,600vp)、≥1000vp 宽 min(70%,720vp) + 标题/标签两栏响应式、四角圆角、无 BOTTOM 安全区扩展）。
+  面板本体转场由外层节点的**隐式 `.animation(this.motionParams())` 驱动**（按相位给参：进场 400ms
+  `FastOutSlowIn` / 退场 300ms `EaseIn` / launch 先 100ms 下顿蓄力再 400ms 与进场同速上滑——六轮反馈放缓，原
+  320/220ms；下顿深度断点分档：
+  手机 32vp「缩回底边脱锚」（直接上飞会有底边割裂感，真机反馈）、宽屏居中卡 6vp）——这是全仓库
+  唯一在产的 translate 驱动机制（抽屉/PaneEntrance 同款）；**勿在面板本体上依赖 `animateTo` 驱动位移**：三轮实测
+  其事务捕获不到面板 translate（onFinish 探针会误测同闭包里其他属性——曾把 scale 弹簧的 1s settle 误当进场动画，
+  该 scale 逐帧重绘整面板还是级联卡顿源，已删）。**隐式动画会捕获该节点一切 translate 变更——屏外归位跳变必须
+  零时长**：`motionParams()` CLOSED 分支返回 `duration: 0`（否则发射终位 -hidden 与归位 +hidden 的跳变会被播成
+  "向下滑过屏幕"）；三条转场入口均为纯状态写 + 带守卫 `setTimeout` 链，相位交接不依赖 `onFinish`（其时序在该节点
+  不可靠）。字段级联/遮罩/toast/域名提示/批量块同样走隐式 `.animation`
+  （单状态翻转 + 每节点 delay），动效常量收在 `InboxSheet.ets` 顶部。**面板位移必须由数值状态直绑**
+  （`@Local panelOffsetY: number` + `.translate({ y: this.panelOffsetY })`，数值目标：手机 900vp / 宽屏 2000vp
+  离屏）；**禁用百分比字符串位移与 `Visibility` 切换参与转场**（首轮/二轮瞬移根因），隐藏只能靠几何离屏
+  （断点切换时 `@Monitor('isWide')` 在 closed 态重设隐藏位）。注意 `uitest dumpLayout` 看不见渲染侧
+  translate——验证动画需人眼或带属性区分的探针。
+  **URL 行级联只上浮不淡入、面板本体（含外层运动节点）全程无 opacity**——`PasteButton` 是安全组件，祖先链 opacity≠1 直接注册失效
+  （`SecurityComponentCheckFail`，模拟器实测；scale 0.97→1 点缀实测无害）；同理勿给面板本体加 opacity 动画（translate/scale 不受影响）。
+  退场即 `clearFocus()` 收键盘（常驻挂载后 TextInput 不再随卸载失焦）；关闭态 `Visibility.None` 兜底 + 逐层 gate 与抽屉同款
+  （根/遮罩 `None` + 面板 enabled/hitTest）。toast（`Index`）已常驻化 + 180ms 浮现，`HitTestMode.None`。
+  能力规格见 `openspec/specs/inbox-motion/`。
 - 卡片在独立进程读取 preferences，`CardSnapshot.open()` 必须先
   `removePreferencesFromCacheSync`，否则读到旧快照。`FlowRepository.notify()` 已做“写快照 + 推送”串行合并。
 - 所有 URL 先经 `normalizeUrl()`：补 `https://`、小写 host、去 fragment、去跟踪参数、query 排序；`url_key`
@@ -152,7 +181,7 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   `runJavaScriptExt('document.body.innerHTML')` 提取实时 DOM，同样复用 `ArticleExtractor`。
 - **沉浸式系统栏**：组件安全区方案（`expandSafeArea` 绘制延伸，非 `setWindowLayoutFullScreen`），系统栏区域
   透出容器自身背景、内容留在安全区自动避让。已扩展 6 处屏幕边缘背景容器：`Index` 根 Stack、`FolderDrawer`
-  抽屉列与遮罩、`InboxSheet` 遮罩与面板（面板仅 BOTTOM）、`SharePage` 根。新增屏幕边缘容器（弹层/抽屉/独立
+  抽屉列与遮罩、`InboxSheet` 遮罩（面板改贴底悬浮卡后不再自行扩展，遮罩独自承担弹层沉浸）、`SharePage` 根。新增屏幕边缘容器（弹层/抽屉/独立
   窗口页）背景色 ≠ 根 paper 时需自行附加 `expandSafeArea`；paper 同色界面由根 Stack 单点覆盖，勿逐页加。
   `bindContentCover` 保持 `enableSafeArea: true`（阅读层零改动承接）。能力规格见 `openspec/specs/immersive-ui/`。
 - 删除语义：软删除 `deleted=1` 保留 30 天；彻底删除/过期清理会写 `tombstone`，同步先传墓碑再删远端文件。

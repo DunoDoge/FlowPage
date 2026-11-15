@@ -32,6 +32,8 @@ const RAIL_WIDTH: number = 280;
 // One-way pane entrance (design D11): a cold-mounted destination rises
 // this far while fading in, reusing the drawer duration and curve.
 const PANE_ENTRANCE_OFFSET: number = 12;
+// Persistent toast floats in with the same rise-only vocabulary.
+const TOAST_MOTION_MS: number = 180;
 
 // Floating tab bar (<1000vp), hosted by HdsTabs from @kit.UIDesignKit. The
 // bar keeps the 56vp system default height for custom builders; the content
@@ -406,19 +408,25 @@ struct Index {
           this.FolderDrawer()
         }
 
-        if (this.appState.showInbox) {
-          InboxSheet()
-        }
+        // Persistently mounted (drawer lesson): the sheet animates by
+        // transform through its internal phase machine, so both the exit
+        // animation and the reopen reset are available. Breakpoints come
+        // from the shared Index listeners (no local mediaquery rebuild).
+        InboxSheet({ isWide: this.isWide, isLarge: this.isLarge })
 
-        if (this.appState.toastText.length > 0) {
-          Text(this.appState.toastText)
-            .fontSize(13)
-            .fontColor($r('app.color.inverse_ink'))
-            .backgroundColor($r('app.color.ink'))
-            .borderRadius(999)
-            .padding({ left: 18, right: 18, top: 9, bottom: 9 })
-            .margin({ bottom: 64 })
-        }
+        // Toast stays mounted and fades in/out with the intent flag; it
+        // never intercepts touches.
+        Text(this.appState.toastText)
+          .fontSize(13)
+          .fontColor($r('app.color.inverse_ink'))
+          .backgroundColor($r('app.color.ink'))
+          .borderRadius(999)
+          .padding({ left: 18, right: 18, top: 9, bottom: 9 })
+          .margin({ bottom: 64 })
+          .opacity(this.appState.toastText.length > 0 ? 1 : 0)
+          .translate({ y: this.appState.toastText.length > 0 ? 0 : 8 })
+          .animation({ duration: TOAST_MOTION_MS, curve: Curve.FastOutSlowIn })
+          .hitTestBehavior(HitTestMode.None)
       }
       .width('100%')
       .height(this.rootStackHeight())
