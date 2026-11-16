@@ -13,7 +13,7 @@
 | 状态 | `@ObservedV2` + `@Trace` + `@ComponentV2` + `@Local` / `@Param` / `@Event` / `@Monitor` |
 | 数据 | RDB `flowpage.db`（7 表 + 9 索引）、preferences、`filesDir/snapshots/*.txt` |
 | 同步 | WebDAV（Basic Auth），ETag 增量 + LWW；书签/文件夹/墓碑三类实体；无分布式 KV、无账号体系 |
-| 测试 | `@ohos/hypium`，`entry/src/ohosTest` 16 个套件 / 202 个用例，仅设备端 |
+| 测试 | `@ohos/hypium`，`entry/src/ohosTest` 20 个套件 / 229 个用例，仅设备端 |
 
 ## 构建与验证（顺序有讲究）
 
@@ -69,6 +69,10 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
 - **刷新靠 tick**：`AppState.notifyChanged()` 递增 `refreshTick`；Repository 的常规 UI 写方法完成后会自动
   `notify()`（`setLinkStatus` 与同步内部方法除外）。直接调 `BookmarkDao` 不会刷新 UI，也不会推送卡片。
   新写入口必须走 Repository，或在末尾补 `notify()`。
+- **所展书签消失时详情腾空**：`DetailContent.syncSnapshot()` 查无此笺即 `clearReadingTimer()` + 置空 +
+  触发 `onRemoved`（宽屏接线 `clearSelection()`，手机端弹栈 + `clearSelection()`），带 `bookmarkId` 快照
+  守卫防误腾空新选中；任何消失路径（列表/批量/同步墓碑/过期清理）都经 refreshTick 收敛到该分支，勿在各
+  删除入口重复清选中。能力规格见 `openspec/specs/detail-vacate/`。
 - `AppState.openBookmark()` 写 `routeTick` 触发手机端 push `detail`；`onContinue` 只携带当前 `selectedId`。
 - 断点矩阵：<700vp 手机壳 = `Navigation` 栈（只 push `detail`）包裹底部悬浮页签 `HdsTabs`；700–999vp 两栏 =
   左栏 `StreamHome` 单实例 + 右栏 `HdsTabs`（页签只切右栏，左栏滚动/筛选/选中不因切换重建）；≥1000vp 三栏 =
