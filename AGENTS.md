@@ -23,7 +23,7 @@
 ```bash
 hvigorw --version                 # 必须 >= 7.26.8
 hvigorw assembleHap               # 产物 entry/build/default/outputs/default/entry-default-signed.hap
-codelinter -c code-linter.json5   # 当前 0 error / 1 条 startIcon 性能建议
+codelinter -c code-linter.json5   # 当前 0 error / 1 warn（PageHeader 自定义组件建议改 @Builder）/ 1 条 startIcon 性能建议
 ```
 
 - 若 `hvigorw` 不在 PATH，本机位于
@@ -166,7 +166,8 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   **URL 行级联只上浮不淡入、面板本体（含外层运动节点）全程无 opacity**——`PasteButton` 是安全组件，祖先链 opacity≠1 直接注册失效
   （`SecurityComponentCheckFail`，模拟器实测；scale 0.97→1 点缀实测无害）；同理勿给面板本体加 opacity 动画（translate/scale 不受影响）。
   退场即 `clearFocus()` 收键盘（常驻挂载后 TextInput 不再随卸载失焦）；关闭态 `Visibility.None` 兜底 + 逐层 gate 与抽屉同款
-  （根/遮罩 `None` + 面板 enabled/hitTest）。toast（`Index`）已常驻化 + 180ms 浮现，`HitTestMode.None`。
+  （根/遮罩 `None` + 面板 enabled/hitTest）。toast（`Index`）已常驻化 + 180ms 浮现，`HitTestMode.None`；带操作
+  toast 另渲染「撤回」chip，仅 chip 放开 hit-test（`None` 只关自身不关子节点），容器与其余区域仍 None。
   能力规格见 `openspec/specs/inbox-motion/`。
 - 卡片在独立进程读取 preferences，`CardSnapshot.open()` 必须先
   `removePreferencesFromCacheSync`，否则读到旧快照。`FlowRepository.notify()` 已做“写快照 + 推送”串行合并。
@@ -197,6 +198,25 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   + `ShareUtil.shareLinkOf/shareLinkTargetOf`；发端包装暂缓——待服务器 `/.well-known/applinking.json`（appIdentifier
   6917619579162930870）与 `/s` 302 端点、AGC 应用链接发布上线后，ShareOut 两处 `link.url` 改回 `shareLinkOf(...)` 即启用。
   能力规格见 `openspec/specs/share-out/`。
+- **书签行快捷操作（单列菜单 + 左滑 + 可撤回删除 + 全屏文件夹选择页）**：行尾「…」弹层为单列菜单——`MenuRow`
+  私有 struct（`StreamHome.ets`）：44vp 行高、hover/press `surface_alt`、危险项红字、focusable + Enter/Space；非回收站
+  操作集 = 分享/多选/移动到文件夹/归档/标记已读/删除（「打开」「加星标」已移除，由行主体点击与行尾星标承担），回收站 =
+  恢复/彻底删除/多选。左滑走内建 `ListItem.swipeAction`，end 用 `SwipeActionItem` 对象形态：分享/删除两块 64vp
+  `surface_alt` 图标块（分享 `sys.symbol.share` 复用 `ShareOut.shareBookmarks`，删除 danger 红 `sys.symbol.trash`）+
+  `onAction` 长距删除区（默认 56vp，超阈值抬手直接删除）；`edgeEffect` 默认 Spring 即非线性展开/回弹，勿自研手势。
+  禁用谓词 = 回收站视图 || 批量选择态 || 已删行，禁用时 `SwipeActionOptions` 不设 end（无划出内容即无手势）。
+  删除按钮与 `onAction` 统一软删（`deleteMany`）+ 带「撤回」toast（回调 `restoreMany`，失败提示「恢复失败，请到回收站
+  找回」）；分享后 `ListScroller.closeAllSwipeActions()` 收起露出区（`streamScroller` 与 List 一对一绑定）；swipe
+  展开即关「…」弹层（`onStateChange` 到 EXPANDED 置 `showActions=false`）；菜单「删除」仍走 AlertDialog 确认。
+  toast 基建：`AppState.toastWithAction(text, ToastAction.of(label, run))`——显式类禁裸对象字面量，带操作停留
+  5000ms、纯 `toast` 2400ms 且清空操作，`runToastAction` 执行回调并清空（ohosTest `Toast.test.ets` 覆盖）。
+  全屏文件夹选择页 `FolderPickerPage` 挂 `Index` 根 Column 的第二个 `bindContentCover`——阅读层 cover 在根 Stack，
+  一节点一 cover 勿同节点双绑；入口 = 行菜单「移动到文件夹」写 `AppState.folderPickOpen` / `folderPickBookmark`
+  （整 Bookmark 对象非裸 id：选择页同步取标题与当前归属，免挂载期异步查询）；`FolderPicker` 的 `confirmMode` 仅供
+  该页（`pick`/`pickRoot`/`submitCreate` 只高亮暂存 + 下钻并发 `onStage`，MUST NOT `onPick`），详情编辑器/批量栏/
+  文件夹面板三个内联使用点不传参行为零变化；未点底部「移到这里」确认条离开零归属写入——只暂存不落库
+  （confirmMode 下「新建文件夹」是真写入，离开仍保留；`onWillDismiss` 放行 + `onDisappear` 复位）。
+  能力规格见 `openspec/specs/stream-row-actions/`、`openspec/specs/bookmark-folders/`。
 - 上传竞态：PUT 前记录 `rev + updatedAt`，成功后仅当仍匹配才回填 ETag 并清 `dirty`；不匹配说明同步期间
   又被编辑，必须保持 dirty。
 - 传输层瞬时失败重试（`WebDavTransport.request()` 内，覆盖所有动词）：429/502/503/504 与 `NET_*` 网络错误
@@ -257,7 +277,8 @@ Index (breakpoint 700/1000vp) ─▶ StreamHome / DetailContent / TagsPage / Syn
   该文件夹的**直属书签**（`BookmarkQuery.folderId` 等值，子文件夹内容经其行下钻；树行计数仍含全部子孙）。
   长按拖拽只改归属（`bookmark.folder_id` / `folder.parent_id`），**不写** `position` / `createdAt`；
   批量与拖拽共用 `FlowRepository.batchMove/batchMoveOut/batchDelete`，单次 `notify()`。行操作入口是行尾
-  「…」`sys.symbol.more` 锚定面板（桌面右键同入口），不要再加长按菜单或 context menu；无拖拽路径经 `FolderPicker`。
+  「…」`sys.symbol.more` 锚定面板（桌面右键同入口；单列菜单与左滑操作集见「书签行快捷操作」条），不要再加长按菜单
+  或 context menu；无拖拽路径经 `FolderPicker`。
 - 动态文案不要只放在带参 `@Builder` 里：实测 `ReadingShell` 的「网页/阅读」标签在模式切换后会残留旧值，
   改为直接内联 `Text` 或提升到 `@Local` 状态；其余带参 builder 的静态文案不受影响。
 - `ForEach` 键值必须覆盖行内会显示的可变字段（如 `${id}|${name}|${count}`）：普通 DTO 不是 `@ObservedV2`，
