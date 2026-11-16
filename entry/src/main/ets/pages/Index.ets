@@ -833,7 +833,10 @@ struct Index {
           showBack: true,
           compact: true,
           onBack: () => this.closeDetail(),
-          onRemoved: () => this.closeDetail()
+          onRemoved: () => {
+            this.appState.clearSelection();
+            this.closeDetail();
+          }
         })
       }
       .hideTitleBar(true)

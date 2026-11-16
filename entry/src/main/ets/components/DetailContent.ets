@@ -80,8 +80,20 @@ export struct DetailContent {
     if (this.bookmarkId.length === 0 || this.busy || this.editing) {
       return;
     }
-    const found = await FlowRepository.get().get(this.bookmarkId);
+    const id = this.bookmarkId;
+    const found = await FlowRepository.get().get(id);
+    // The selection may have moved while the query was in flight; a stale
+    // response must neither refresh nor vacate the new target.
+    if (this.bookmarkId !== id) {
+      return;
+    }
     if (found === undefined) {
+      // Purged by any path (list purge, sync tombstone): vacate the pane
+      // instead of rendering the stale in-memory copy; onRemoved lets the
+      // host drop the selection.
+      this.clearReadingTimer();
+      this.hasBookmark = false;
+      this.onRemoved();
       return;
     }
     const snapshotChanged = found.snapshotPath !== this.bookmark.snapshotPath ||
