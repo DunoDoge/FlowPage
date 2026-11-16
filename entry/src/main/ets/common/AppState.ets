@@ -2,6 +2,20 @@ import { common } from '@kit.AbilityKit';
 import { window } from '@kit.ArkUI';
 import { Pane } from './Constants';
 import { ReadingSeed } from '../model/ReadingEntry';
+import { Bookmark } from '../model/Bookmark';
+
+// Toast action button (e.g. undo): explicit class, not a bare object literal.
+export class ToastAction {
+  label: string = '';
+  run: () => void = () => {};
+
+  static of(label: string, run: () => void): ToastAction {
+    const action = new ToastAction();
+    action.label = label;
+    action.run = run;
+    return action;
+  }
+}
 
 @ObservedV2
 export class AppState {
@@ -24,6 +38,8 @@ export class AppState {
   // surfaced as zero counts / an empty tree until the next refresh tick).
   @Trace libraryReady: boolean = false;
   @Trace toastText: string = '';
+  // Present only while its toast is showing; a plain toast clears it.
+  @Trace toastAction: ToastAction | undefined = undefined;
   @Trace tagFilter: string = '';
   @Trace folderFilter: string = '';
   // Home folder tree session state, hoisted so a phone detail round-trip
@@ -50,6 +66,11 @@ export class AppState {
   @Trace readingBackTick: number = 0;
   @Trace readingCanGoBack: boolean = false;
   readingSeed: ReadingSeed = new ReadingSeed();
+  // Full-screen folder target page intent: row menu sets both, Index mounts
+  // FolderPickerPage via bindContentCover; closing without confirm writes
+  // nothing.
+  @Trace folderPickOpen: boolean = false;
+  @Trace folderPickBookmark: Bookmark = new Bookmark();
   // Freeform window chrome, wired by EntryAbility from window decor events;
   // the title strip and the three-button avoidance consume them.
   @Trace freeWindow: boolean = false;
@@ -202,12 +223,51 @@ export class AppState {
     this.selectedId = '';
   }
 
+  // A stale timeout from a previous toast must be cancelled on supersede:
+  // the text-equality guard cannot tell two same-text toasts apart, so the
+  // old timer would cut the new toast (and its undo chip) short.
+  private toastTimer: number = -1;
+
+  private clearToastTimer(): void {
+    if (this.toastTimer >= 0) {
+      clearTimeout(this.toastTimer);
+      this.toastTimer = -1;
+    }
+  }
+
   toast(text: string): void {
+    this.clearToastTimer();
     this.toastText = text;
-    setTimeout(() => {
+    this.toastAction = undefined;
+    this.toastTimer = setTimeout(() => {
+      this.toastTimer = -1;
       if (this.toastText === text) {
         this.toastText = '';
       }
     }, 2400);
+  }
+
+  // Action toasts (undo) outlive plain ones so the button stays reachable.
+  toastWithAction(text: string, action: ToastAction): void {
+    this.clearToastTimer();
+    this.toastText = text;
+    this.toastAction = action;
+    this.toastTimer = setTimeout(() => {
+      this.toastTimer = -1;
+      if (this.toastText === text) {
+        this.toastText = '';
+        this.toastAction = undefined;
+      }
+    }, 5000);
+  }
+
+  runToastAction(): void {
+    this.clearToastTimer();
+    const action = this.toastAction;
+    this.toastText = '';
+    this.toastAction = undefined;
+    if (action !== undefined) {
+      action.run();
+    }
   }
 }

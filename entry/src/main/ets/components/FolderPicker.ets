@@ -19,6 +19,9 @@ class PickerColumn {
 
 // Miller-style folder selector: one column per level, click drills right.
 // Shared by the bookmark editor and the folder move target picker.
+// confirmMode (full-screen picker page): taps only drill + stage the target
+// (reported via onStage); the move commits when the page's confirm bar says
+// so. Inline usages omit it and keep pick-to-commit.
 @ComponentV2
 export struct FolderPicker {
   @Param selectedId: string = '';
@@ -29,7 +32,10 @@ export struct FolderPicker {
   @Param excludeSubtreeOfIds: string[] = [];
   @Param showCreate: boolean = true;
   @Param pickerHeight: number = 300;
+  @Param confirmMode: boolean = false;
   @Event onPick: (folderId: string, label: string) => void = () => {};
+  // confirmMode only: fired on every tap with the staged target.
+  @Event onStage: (folderId: string, label: string) => void = () => {};
 
   @Local appState: AppState = AppState.shared;
   @Local columns: PickerColumn[] = [];
@@ -171,14 +177,23 @@ export struct FolderPicker {
       AppState.shared.toast('不能选这个位置');
       return;
     }
-    this.onPick(node.folder.id, node.path);
+    if (this.confirmMode) {
+      // Drill + stage only; the page's confirm bar commits the move.
+      this.onStage(node.folder.id, node.path);
+    } else {
+      this.onPick(node.folder.id, node.path);
+    }
     this.chain = this.chain.slice(0, index).concat([node.folder.id]);
     this.rebuild();
     this.scrollToEnd();
   }
 
   private pickRoot(): void {
-    this.onPick('', this.rootLabel);
+    if (this.confirmMode) {
+      this.onStage('', this.rootLabel);
+    } else {
+      this.onPick('', this.rootLabel);
+    }
     this.chain = [];
     this.rebuild();
   }
@@ -206,7 +221,11 @@ export struct FolderPicker {
       this.chain = this.createPrefix.concat([created.id]);
       this.pruneChain();
       this.rebuild();
-      this.onPick(created.id, this.pathOf(created.id));
+      if (this.confirmMode) {
+        this.onStage(created.id, this.pathOf(created.id));
+      } else {
+        this.onPick(created.id, this.pathOf(created.id));
+      }
       this.scrollToEnd();
     } catch (error) {
       AppState.shared.toast('新建失败，请稍后再试');
@@ -238,7 +257,9 @@ export struct FolderPicker {
       }
     }
     .width('100%')
-    .height(this.pickerHeight)
+    // confirmMode fills its host (full-screen page); inline pickers keep
+    // their fixed height.
+    .height(this.confirmMode ? '100%' : this.pickerHeight)
     .backgroundColor($r('app.color.surface_alt'))
     .borderRadius(8)
     .alignItems(HorizontalAlign.Start)

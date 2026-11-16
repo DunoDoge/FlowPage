@@ -2,7 +2,7 @@ import { KeyCode } from '@kit.InputKit';
 import { unifiedDataChannel, uniformTypeDescriptor } from '@kit.ArkData';
 import { Bookmark } from '../model/Bookmark';
 import { BookmarkQuery, BookmarkSort } from '../model/BookmarkQuery';
-import { AppState } from '../common/AppState';
+import { AppState, ToastAction } from '../common/AppState';
 import { BookmarkSource, ReadState, StreamFilter } from '../common/Constants';
 import { FolderDragSession } from '../common/FolderDragSession';
 import { extractAllUrls } from '../common/UrlUtil';
@@ -17,6 +17,52 @@ import { SubtitleStatus } from './SubtitleStatus';
 // body has no chip row (real-device feedback revision, task 7.1).
 
 const PAGE_SIZE: number = 50;
+
+// Single-column row of the row action popup. Manual hover/press feedback per
+// the interaction-feedback spec (stateStyles leaves pressed bg stuck).
+@ComponentV2
+struct MenuRow {
+  @Param label: string = '';
+  @Param danger: boolean = false;
+  @Event onTap: () => void = () => {};
+  @Local hovered: boolean = false;
+  @Local pressed: boolean = false;
+
+  build() {
+    Row() {
+      Text(this.label)
+        .fontSize(14)
+        .fontColor(this.danger ? $r('app.color.danger') : $r('app.color.ink'))
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .layoutWeight(1)
+    }
+    .width('100%')
+    .height(44)
+    .padding({ left: 10, right: 10 })
+    .borderRadius(8)
+    .backgroundColor(this.pressed || this.hovered ? $r('app.color.surface_alt') : Color.Transparent)
+    .onHover((isHover: boolean) => {
+      this.hovered = isHover;
+    })
+    .onTouch((event: TouchEvent) => {
+      if (event.type === TouchType.Down) {
+        this.pressed = true;
+      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+        this.pressed = false;
+      }
+    })
+    .accessibilityText(this.label)
+    .focusable(true)
+    .onClick(() => this.onTap())
+    .onKeyEvent((event: KeyEvent) => {
+      if (event.type === KeyType.Down &&
+        (event.keyCode === KeyCode.KEYCODE_ENTER || event.keyCode === KeyCode.KEYCODE_SPACE)) {
+        this.onTap();
+      }
+    })
+  }
+}
 
 @ComponentV2
 export struct StreamHome {
@@ -45,7 +91,6 @@ export struct StreamHome {
   @Local batchMoveOpen: boolean = false;
   @Local actionTarget: Bookmark = new Bookmark();
   @Local showActions: boolean = false;
-  @Local bookmarkMoveOpen: boolean = false;
   @Local dragSession: FolderDragSession = FolderDragSession.shared;
   // Manual hover/press feedback: stateStyles sticks on plain text/glyph
   // components after the pointer leaves, so each interactive surface tracks
@@ -66,6 +111,10 @@ export struct StreamHome {
   private searchTimer: number = -1;
   private loadGeneration: number = 0;
   private pendingReload: boolean = false;
+  // One-to-one List binding for closeAllSwipeActions(): collapsing the
+  // revealed area after the share button fires needs the ListScroller API,
+  // plain Scroller has no swipe control.
+  private streamScroller: ListScroller = new ListScroller();
 
   aboutToAppear(): void {
     this.load();
@@ -120,7 +169,6 @@ export struct StreamHome {
   onRowSelectionModeChanged(): void {
     if (!this.appState.selectionMode) {
       this.batchMoveOpen = false;
-      this.bookmarkMoveOpen = false;
     }
   }
 
@@ -277,12 +325,10 @@ export struct StreamHome {
   private exitSelection(): void {
     this.appState.clearRowSelection();
     this.batchMoveOpen = false;
-    this.bookmarkMoveOpen = false;
   }
 
   private finishActions(): void {
     this.showActions = false;
-    this.bookmarkMoveOpen = false;
     this.exitSelection();
   }
 
@@ -303,7 +349,6 @@ export struct StreamHome {
     for (let i = 0; i < this.filtered.length; i++) {
       if (this.filtered[i].id === id) {
         this.actionTarget = this.filtered[i];
-        this.bookmarkMoveOpen = false;
         this.showActions = true;
         return;
       }
@@ -601,6 +646,72 @@ export struct StreamHome {
     }
   }
 
+  // Swipe eligibility (stream-row-actions): left-swipe only outside the
+  // trash view, outside batch selection, and on rows that are not
+  // soft-deleted. Disabled rows get an options object without end, so the
+  // side has no swipe content and the row cannot be swiped at all.
+  private canSwipeRow(item: Bookmark): boolean {
+    return this.appState.homeFilter !== StreamFilter.TRASH &&
+      !this.appState.selectionMode && !item.deleted;
+  }
+
+  private swipeOptions(item: Bookmark): SwipeActionOptions {
+    if (!this.canSwipeRow(item)) {
+      const locked: SwipeActionOptions = {};
+      return locked;
+    }
+    const end: SwipeActionItem = {
+      builder: (): void => {
+        this.SwipeActionButtons(item);
+      },
+      onAction: (): void => {
+        this.swipeDelete(item);
+      },
+      onStateChange: (state: SwipeActionState) => {
+        // A swipe opening must close the anchored menu popup so the two
+        // action surfaces never overlap on the same row.
+        if (state === SwipeActionState.EXPANDED) {
+          this.showActions = false;
+        }
+      }
+    };
+    const options: SwipeActionOptions = {
+      end: end,
+      edgeEffect: SwipeEdgeEffect.Spring
+    };
+    return options;
+  }
+
+  // Both swipe delete entries (revealed button tap and threshold release
+  // via onAction) funnel here: soft delete + undoable toast. The menu's
+  // trash entry keeps its AlertDialog flow.
+  private async swipeDelete(item: Bookmark): Promise<void> {
+    if (this.batchBusy) {
+      return;
+    }
+    const id = item.id;
+    this.batchBusy = true;
+    try {
+      await FlowRepository.get().deleteMany([id]);
+      AppState.shared.toastWithAction('已把这一笺放进回收站',
+        ToastAction.of('撤回', (): void => {
+          this.undoSwipeDelete([id]);
+        }));
+    } catch (error) {
+      AppState.shared.toast('删除失败，请重试');
+    } finally {
+      this.batchBusy = false;
+    }
+  }
+
+  private async undoSwipeDelete(ids: string[]): Promise<void> {
+    try {
+      await FlowRepository.get().restoreMany(ids);
+    } catch (error) {
+      AppState.shared.toast('恢复失败，请到回收站找回');
+    }
+  }
+
   private async purgeItems(ids: string[]): Promise<void> {
     if (ids.length === 0) {
       return;
@@ -661,18 +772,6 @@ export struct StreamHome {
     });
   }
 
-  private async quickToggleStar(): Promise<void> {
-    const target = this.actionTarget;
-    const next = !target.starred;
-    this.showActions = false;
-    try {
-      await FlowRepository.get().setStarred(target.id, next);
-      AppState.shared.toast(next ? '已加星标' : '已取消星标');
-    } catch (error) {
-      AppState.shared.toast('操作失败，请重试');
-    }
-  }
-
   private async quickToggleArchive(): Promise<void> {
     const target = this.actionTarget;
     const next = !target.archived;
@@ -697,16 +796,12 @@ export struct StreamHome {
     }
   }
 
-  private async runBookmarkMove(folderId: string, label: string): Promise<void> {
-    const id = this.actionTarget.id;
+  // The row menu hands over to the full-screen picker page (Index cover):
+  // taps there only drill; the page's confirm bar commits the move.
+  private openMoveTarget(): void {
+    this.appState.folderPickBookmark = this.actionTarget;
     this.showActions = false;
-    this.bookmarkMoveOpen = false;
-    try {
-      await FlowRepository.get().setBookmarkFolder(id, folderId);
-      AppState.shared.toast(`已移到${label.length > 0 ? label : '根目录'}`);
-    } catch (error) {
-      AppState.shared.toast('移动失败，请稍后再试');
-    }
+    this.appState.folderPickOpen = true;
   }
 
   private shareLinkOf(item: Bookmark): ShareLink {
@@ -1054,7 +1149,7 @@ export struct StreamHome {
       } else if (this.filtered.length === 0) {
         this.EmptyView()
       } else {
-        List({ space: 0 }) {
+        List({ space: 0, scroller: this.streamScroller }) {
           ForEach(this.filtered, (item: Bookmark, index: number) => {
             ListItem() {
               Column() {
@@ -1070,7 +1165,6 @@ export struct StreamHome {
                   dragEnabled: !item.deleted,
                   onOpen: (id: string) => {
                     this.showActions = false;
-                    this.bookmarkMoveOpen = false;
                     this.onOpen(id);
                   },
                   onToggleStar: (id: string, starred: boolean) => {
@@ -1103,12 +1197,12 @@ export struct StreamHome {
                   onStateChange: (event: PopupStateChangeParam) => {
                     if (!event.isVisible && this.actionTarget.id === item.id) {
                       this.showActions = false;
-                      this.bookmarkMoveOpen = false;
                     }
                   }
                 }
               )
             }
+            .swipeAction(this.swipeOptions(item))
           }, (item: Bookmark) => `${item.id}:${item.rev}:${item.updatedAt}`)
         }
         .width('100%')
@@ -1158,82 +1252,78 @@ export struct StreamHome {
       })
   }
 
+  // Revealed swipe area: share mirrors the menu entry (single HYPERLINK
+  // record); delete reuses the swipeDelete path (soft delete + undo toast).
+  // Share collapses the reveal via the ListScroller afterwards.
+  @Builder
+  SwipeActionButtons(item: Bookmark) {
+    Row() {
+      Column() {
+        SymbolGlyph($r('sys.symbol.share'))
+          .fontSize(20)
+          .fontColor([$r('app.color.ink')])
+      }
+      .justifyContent(FlexAlign.Center)
+      .width(64)
+      .height('100%')
+      .backgroundColor($r('app.color.surface_alt'))
+      .accessibilityText(`分享${item.title.length > 0 ? item.title : item.url}`)
+      .onClick(() => {
+        ShareOut.shareBookmarks([this.shareLinkOf(item)]);
+        this.streamScroller.closeAllSwipeActions();
+      })
+
+      Column() {
+        SymbolGlyph($r('sys.symbol.trash'))
+          .fontSize(20)
+          .fontColor([$r('app.color.danger')])
+      }
+      .justifyContent(FlexAlign.Center)
+      .width(64)
+      .height('100%')
+      .backgroundColor($r('app.color.surface_alt'))
+      .accessibilityText(`删除${item.title.length > 0 ? item.title : item.url}`)
+      .onClick(() => {
+        this.swipeDelete(item);
+      })
+    }
+    .height('100%')
+  }
+
   @Builder
   QuickActionPanel() {
-    if (this.bookmarkMoveOpen) {
-      Column({ space: 6 }) {
-        Row() {
-          Text(`移动「${this.actionTarget.title.length > 0 ? this.actionTarget.title : this.actionTarget.url}」到…`)
-            .fontSize(12)
-            .fontColor($r('app.color.ink_secondary'))
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
-          Text('取消')
-            .fontSize(12)
-            .fontColor($r('app.color.ink_secondary'))
-            .height(32)
-            .padding({ left: 8, right: 8 })
-            .responseRegion({ x: -8, y: -6, width: 48, height: 44 })
-            .accessibilityText('取消移动书签')
-            .onClick(() => {
-              this.bookmarkMoveOpen = false;
-            })
-        }
-        .width('100%')
-
-        FolderPicker({
-          selectedId: this.actionTarget.folderId,
-          rootLabel: '根目录',
-          pickerHeight: 170,
-          onPick: (folderId: string, label: string): void => {
-            this.runBookmarkMove(folderId, label);
-          }
-        })
-          .width('100%')
+    // Single-column menu (stream-row-actions): open/star stay on the row
+    // itself (tap body / trailing star), so the popup carries the rest.
+    Column() {
+      if (this.actionTarget.deleted) {
+        MenuRow({ label: '恢复', onTap: () => {
+          this.restoreItems([this.actionTarget.id]);
+        } })
+        MenuRow({ label: '彻底删除', danger: true, onTap: () => {
+          this.confirmPurge([this.actionTarget.id]);
+        } })
+        MenuRow({ label: '多选', onTap: () => this.enterSelection(this.actionTarget.id) })
+      } else {
+        MenuRow({ label: '分享', onTap: () => {
+          this.shareActionTarget();
+        } })
+        MenuRow({ label: '多选', onTap: () => this.enterSelection(this.actionTarget.id) })
+        MenuRow({ label: '移动到文件夹', onTap: () => {
+          this.openMoveTarget();
+        } })
+        MenuRow({ label: this.actionTarget.archived ? '取消归档' : '归档', onTap: () => {
+          this.quickToggleArchive();
+        } })
+        MenuRow({ label: this.actionTarget.readState === ReadState.READ ? '标记未读' : '标记已读', onTap: () => {
+          this.quickToggleRead();
+        } })
+        MenuRow({ label: '删除', danger: true, onTap: () => {
+          this.confirmTrash([this.actionTarget.id]);
+        } })
       }
-      .width(236)
-      .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-    } else {
-      Flex({ wrap: FlexWrap.Wrap }) {
-        if (this.actionTarget.deleted) {
-          this.ActionChip(() => '恢复', false, () => {
-            this.restoreItems([this.actionTarget.id]);
-          })
-          this.ActionChip(() => '彻底删除', true, () => {
-            this.confirmPurge([this.actionTarget.id]);
-          })
-          this.ActionChip(() => '多选', false, () => this.enterSelection(this.actionTarget.id))
-        } else {
-          this.ActionChip(() => '打开', false, () => {
-            const id = this.actionTarget.id;
-            this.showActions = false;
-            this.onOpen(id);
-          })
-          this.ActionChip(() => '分享', false, () => {
-            this.shareActionTarget();
-          })
-          this.ActionChip(() => '多选', false, () => this.enterSelection(this.actionTarget.id))
-          this.ActionChip(() => '移动到文件夹', false, () => {
-            this.bookmarkMoveOpen = true;
-          })
-          this.ActionChip(() => this.actionTarget.starred ? '取消星标' : '加星标', false, () => {
-            this.quickToggleStar();
-          })
-          this.ActionChip(() => this.actionTarget.archived ? '取消归档' : '归档', false, () => {
-            this.quickToggleArchive();
-          })
-          this.ActionChip(() => this.actionTarget.readState === ReadState.READ ? '标记未读' : '标记已读', false, () => {
-            this.quickToggleRead();
-          })
-          this.ActionChip(() => '删除', true, () => {
-            this.confirmTrash([this.actionTarget.id]);
-          })
-        }
-      }
-      .width(260)
-      .padding({ left: 10, right: 10, top: 8, bottom: 8 })
     }
+    .width(248)
+    .padding({ left: 8, right: 8, top: 6, bottom: 6 })
   }
 
   @Builder

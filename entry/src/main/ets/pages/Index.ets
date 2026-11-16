@@ -20,6 +20,7 @@ import { TagsPage } from './TagsPage';
 import { SyncPage } from './SyncPage';
 import { SettingsPage } from './SettingsPage';
 import { ReadingShell } from '../components/ReadingShell';
+import { FolderPickerPage } from '../components/FolderPickerPage';
 
 // Drawer / docked rail motion. The drawer stays mounted and animates by
 // transform so open and close are symmetric; the panel leads and its
@@ -414,19 +415,40 @@ struct Index {
         // from the shared Index listeners (no local mediaquery rebuild).
         InboxSheet({ isWide: this.isWide, isLarge: this.isLarge })
 
-        // Toast stays mounted and fades in/out with the intent flag; it
-        // never intercepts touches.
-        Text(this.appState.toastText)
-          .fontSize(13)
-          .fontColor($r('app.color.inverse_ink'))
-          .backgroundColor($r('app.color.ink'))
-          .borderRadius(999)
-          .padding({ left: 18, right: 18, top: 9, bottom: 9 })
-          .margin({ bottom: 64 })
-          .opacity(this.appState.toastText.length > 0 ? 1 : 0)
-          .translate({ y: this.appState.toastText.length > 0 ? 0 : 8 })
-          .animation({ duration: TOAST_MOTION_MS, curve: Curve.FastOutSlowIn })
-          .hitTestBehavior(HitTestMode.None)
+        // Toast stays mounted and fades in/out with the intent flag. The
+        // container never intercepts touches; only an action chip (undo)
+        // opts back into hit-testing -- HitTestMode.None disables the node
+        // itself, children stay reachable.
+        Row({ space: 10 }) {
+          Text(this.appState.toastText)
+            .fontSize(13)
+            .fontColor($r('app.color.inverse_ink'))
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          if (this.appState.toastAction !== undefined) {
+            Text(this.appState.toastAction.label)
+              .fontSize(12)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.ink'))
+              .backgroundColor($r('app.color.inverse_ink'))
+              .borderRadius(999)
+              .padding({ left: 12, right: 12, top: 5, bottom: 5 })
+              .responseRegion({ x: -6, y: -8, width: 76, height: 44 })
+              .accessibilityText(this.appState.toastAction.label)
+              .hitTestBehavior(HitTestMode.Default)
+              .onClick(() => {
+                this.appState.runToastAction();
+              })
+          }
+        }
+        .backgroundColor($r('app.color.ink'))
+        .borderRadius(999)
+        .padding({ left: 18, right: 18, top: 9, bottom: 9 })
+        .margin({ bottom: 64 })
+        .opacity(this.appState.toastText.length > 0 ? 1 : 0)
+        .translate({ y: this.appState.toastText.length > 0 ? 0 : 8 })
+        .animation({ duration: TOAST_MOTION_MS, curve: Curve.FastOutSlowIn })
+        .hitTestBehavior(HitTestMode.None)
       }
       .width('100%')
       .height(this.rootStackHeight())
@@ -448,6 +470,18 @@ struct Index {
     }
     .width('100%')
     .height('100%')
+    // Second full-screen layer on the root column (one bindContentCover per
+    // node): the folder target page. Leaving without the confirm bar writes
+    // nothing (zero-write dismiss).
+    .bindContentCover(this.appState.folderPickOpen, this.FolderPickCover(), {
+      enableSafeArea: true,
+      onWillDismiss: (action: DismissContentCoverAction) => {
+        action.dismiss();
+      },
+      onDisappear: () => {
+        this.appState.folderPickOpen = false;
+      }
+    })
   }
 
   private stripVisible(): boolean {
@@ -466,6 +500,11 @@ struct Index {
         this.appState.closeReading();
       }
     })
+  }
+
+  @Builder
+  FolderPickCover() {
+    FolderPickerPage({ bookmark: this.appState.folderPickBookmark })
   }
 
   @Builder

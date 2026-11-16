@@ -16,6 +16,7 @@ import folderDropTest from './FolderDrop.test'
 import folderHomeTest from './FolderHome.test'
 import windowChromeTest from './WindowChrome.test'
 import shareOutTest from './ShareOut.test'
+import toastTest from './Toast.test'
 
 export default function testsuite() {
   webDavXmlTest()
@@ -36,4 +37,5 @@ export default function testsuite() {
   folderHomeTest()
   windowChromeTest()
   shareOutTest()
+  toastTest()
 }
